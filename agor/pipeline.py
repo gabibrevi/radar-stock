@@ -14,9 +14,12 @@ from .engines.base import EngineResult, ScoringContext
 from .engines.e01_quality import QualityEngine
 from .engines.e02_financial_health import FinancialHealthEngine
 from .engines.e03_valuation import ValuationEngine
+from .engines.e04_management import ManagementEngine
+from .engines.e08_institutional import InstitutionalEngine
 from .engines.e10_technical import TechnicalEngine
 from .engines.e14_fundamental_momentum import FundamentalMomentumEngine
 from .engines.e16_asymmetry import AsymmetryEngine, compute_conviction
+from .features.ownership import institutional_metrics, insider_metrics
 from .features.panel import build_panel
 from .features.technical import compute_technicals
 from .features.valuation import add_sector_medians, compute_valuation
@@ -35,15 +38,15 @@ ENGINES = (
     FinancialHealthEngine(),
     FundamentalMomentumEngine(),
     ValuationEngine(),
+    ManagementEngine(),
+    InstitutionalEngine(),
     TechnicalEngine(),
 )
 
 PENDING_ENGINES = (
-    "e04_management",
     "e05_moat",
     "e06_megatrends",
     "e07_catalysts",
-    "e08_institutional",
     "e09_sentiment",
     "e11_historical_analogs",
     "e12_risk",
@@ -108,6 +111,67 @@ def enrich_with_prices(
     return snapshot, True
 
 
+def enrich_with_ownership(
+    con: duckdb.DuckDBPyConnection, snapshot: pd.DataFrame, as_of: dt.date
+) -> pd.DataFrame:
+    """Añade el comportamiento de directivos y el flujo institucional.
+
+    Los importes en dólares se convierten aquí en proporciones. Sin ese paso, cien
+    mil dólares de compra pesarían lo mismo en una empresa de 200 millones que en
+    una de cien mil millones, y el ranking de convicción directiva se ordenaría por
+    tamaño. El denominador preferido es la capitalización; cuando no hay precios se
+    usa el activo total, que es peor referencia pero mantiene el motor en pie en la
+    instalación sin clave de Polygon.
+    """
+    shares = _numeric(snapshot, "share_count")
+    scale = _numeric(snapshot, "market_cap")
+    if scale.notna().sum() == 0:
+        scale = _numeric(snapshot, "assets")
+    scale = scale.where(scale > 0)
+
+    insiders = insider_metrics(con, as_of)
+    if not insiders.empty:
+        snapshot = snapshot.join(insiders, how="left")
+        buys = _numeric(snapshot, "ins_buy_usd")
+        sells = _numeric(snapshot, "ins_sell_usd")
+        traded = buys + sells
+
+        snapshot["ins_net_to_mcap"] = _numeric(snapshot, "ins_net_usd") / scale
+        snapshot["ins_net_buyers_90d"] = _numeric(snapshot, "ins_buyers_90d") - _numeric(
+            snapshot, "ins_sellers_90d"
+        )
+        # Sin ninguna operación en la ventana el reparto no existe, y forzarlo a cero
+        # diría "solo vendieron", que es una afirmación distinta de "no hicieron nada".
+        snapshot["ins_buy_share"] = (buys / traded).where(traded > 0)
+        snapshot["ins_ownership_pct"] = _numeric(snapshot, "ins_shares_held") / shares.where(
+            shares > 0
+        )
+        snapshot["ins_grant_dilution"] = _numeric(snapshot, "ins_granted_shares") / shares.where(
+            shares > 0
+        )
+        snapshot["strat_net_to_mcap"] = _numeric(snapshot, "strat_net_usd") / scale
+
+    institutional = institutional_metrics(con, as_of)
+    if not institutional.empty:
+        snapshot = snapshot.join(institutional, how="left")
+        held = _numeric(snapshot, "inst_shares")
+        pct = held / shares.where(shares > 0)
+        # Las declaraciones se solapan entre gestoras y arrastran clases de acciones
+        # distintas bajo el mismo CUSIP, así que la suma puede superar el capital
+        # existente. Un exceso pequeño se recorta; uno grande significa que el mapeo
+        # es incorrecto para esa empresa y se declara desconocido en lugar de
+        # inventar un 300% de propiedad institucional.
+        snapshot["inst_ownership_pct"] = pct.where(pct <= 1.5).clip(upper=1.0)
+
+    return snapshot
+
+
+def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column in frame.columns:
+        return pd.to_numeric(frame[column], errors="coerce")
+    return pd.Series(np.nan, index=frame.index, dtype="float64")
+
+
 def score(
     con: duckdb.DuckDBPyConnection,
     as_of: dt.date | None = None,
@@ -124,6 +188,7 @@ def score(
     console.print(f"Empresas con datos suficientes: [bold]{len(snapshot):,}[/bold]")
 
     snapshot, has_prices = enrich_with_prices(con, snapshot)
+    snapshot = enrich_with_ownership(con, snapshot, as_of)
     ctx = ScoringContext(
         snapshot=snapshot,
         groups=snapshot["sector"].fillna("Sin clasificar"),

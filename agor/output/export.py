@@ -54,6 +54,7 @@ def write_web_data(
     calibration: pd.DataFrame,
     as_of: dt.date,
     weights: dict[str, float],
+    freshness: pd.DataFrame | None = None,
 ) -> Path:
     """JSON que consume el dashboard estático.
 
@@ -69,6 +70,10 @@ def write_web_data(
         "pesos": {ENGINE_NAMES_ES.get(k, k): round(v, 2) for k, v in weights.items()},
         "distribucion": _distribution(frame),
         "calibracion": _records(calibration),
+        # Va en el payload y no solo en los registros de ejecución porque quien mira
+        # el dashboard necesita saber que el flujo institucional que está leyendo
+        # puede ser de hace cuatro meses.
+        "frescura": _records(freshness if freshness is not None else pd.DataFrame()),
         "rankings": [
             {
                 "clave": r.key,

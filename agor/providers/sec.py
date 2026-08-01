@@ -19,6 +19,7 @@ dos.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import zipfile
 from pathlib import Path
 
@@ -50,6 +51,8 @@ class SecClient:
         )
         self.fsds_dir = CACHE_DIR / "sec" / "fsds"
         self.fsds_dir.mkdir(parents=True, exist_ok=True)
+        self.datasets_dir = CACHE_DIR / "sec" / "datasets"
+        self.datasets_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Universo
@@ -114,6 +117,77 @@ class SecClient:
                 while chunk := source.read(1 << 22):
                     handle.write(chunk)
         return target
+
+    # ------------------------------------------------------------------
+    # Insiders (formularios 3, 4 y 5)
+    # ------------------------------------------------------------------
+    def insider_download(self, year: int, quarter: int) -> Path | None:
+        """Dataset trimestral de operaciones de insiders. Unos 8 MB."""
+        dest = self.datasets_dir / f"{year}q{quarter}_form345.zip"
+        if dest.exists() and dest.stat().st_size > 100_000:
+            return dest
+        url = (
+            f"{SEC_BASE}/files/structureddata/data/insider-transactions-data-sets/"
+            f"{year}q{quarter}_form345.zip"
+        )
+        if not self.http.head_exists(url):
+            return None
+        return self.http.download(url, dest)
+
+    # ------------------------------------------------------------------
+    # 13F
+    # ------------------------------------------------------------------
+    def list_13f_datasets(self) -> list[str]:
+        """URLs de los datasets de 13F, leídas de la página oficial.
+
+        No se construyen por patrón a propósito: la SEC cambió la nomenclatura en
+        2024 y ahora publica rangos de tres meses (`01sep2025-30nov2025`) en lugar
+        de trimestres (`2023q4`). Coexisten los dos formatos y es previsible que
+        vuelva a cambiar, así que leer el índice es lo único robusto.
+        """
+        self.http.limiter.acquire()
+        response = self.http.session.get(
+            f"{SEC_BASE}/data-research/sec-markets-data/form-13f-data-sets", timeout=60
+        )
+        response.raise_for_status()
+        found = re.findall(r'[^"\']*form-13f-data-sets/[^"\']*\.zip', response.text)
+        urls: list[str] = []
+        for href in found:
+            url = href if href.startswith("http") else f"{SEC_BASE}/{href.lstrip('/')}"
+            if url not in urls:
+                urls.append(url)
+        return urls
+
+    def download_13f(self, url: str) -> Path:
+        return self.http.download(url, self.datasets_dir / url.rsplit("/", 1)[-1])
+
+    # ------------------------------------------------------------------
+    # Puente CUSIP -> ticker
+    # ------------------------------------------------------------------
+    def fails_to_deliver(self, months: int = 6) -> list[Path]:
+        """Ficheros de fallos de entrega, usados solo por su columna CUSIP/SYMBOL.
+
+        Se publican dos por mes (quincenas `a` y `b`). Cada uno trae unos miles de
+        pares CUSIP-ticker y acumulando varios se cubre casi todo el universo
+        negociado. Los que aún no existen devuelven 404 y se ignoran.
+        """
+        out: list[Path] = []
+        today = dt.date.today()
+        for offset in range(months):
+            month = today.month - offset
+            year = today.year + (month - 1) // 12
+            month = (month - 1) % 12 + 1
+            for half in ("a", "b"):
+                name = f"cnsfails{year}{month:02d}{half}.zip"
+                dest = self.datasets_dir / name
+                if dest.exists() and dest.stat().st_size > 10_000:
+                    out.append(dest)
+                    continue
+                url = f"{SEC_BASE}/files/data/fails-deliver-data/{name}"
+                if not self.http.head_exists(url):
+                    continue
+                out.append(self.http.download(url, dest))
+        return out
 
     # ------------------------------------------------------------------
     # API por empresa (incremental)

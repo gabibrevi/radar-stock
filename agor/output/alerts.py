@@ -1,9 +1,16 @@
 """Las ocho alertas de la especificación.
 
-Cinco se pueden generar hoy con los datos disponibles y tres no. Las que no, se
-declaran explícitamente como pendientes en `PENDING_RULES` en lugar de sustituirse
-por un sucedáneo: una alerta que dice "compras relevantes de insiders" y en
-realidad mide otra cosa es peor que no tener la alerta.
+Siete se pueden generar hoy con los datos disponibles y una no. La que no, se
+declara explícitamente como pendiente en `PENDING_RULES` en lugar de sustituirse
+por un sucedáneo: una alerta que dice "revisa al alza sus previsiones" y en realidad
+mide otra cosa es peor que no tener la alerta.
+
+Las dos de propiedad —compras de directivos y entrada de fondos— tienen un matiz
+que se traslada al texto de cada aviso: se calculan sobre datasets trimestrales de
+la SEC, así que describen el último trimestre publicado y no la sesión de hoy. Una
+alerta que da a entender que los directivos están comprando ahora mismo, cuando el
+dato es de hace tres meses, invita a actuar con una urgencia que el dato no
+respalda, y por eso cada aviso lleva su fecha.
 
 Las dos primeras reglas necesitan que exista histórico de puntuaciones, así que no
 producen nada en la primera ejecución. Eso no es un fallo: es que el radar todavía
@@ -23,17 +30,11 @@ AVAILABLE_RULES = {
     "ruptura_con_volumen": "Rompe una base técnica con volumen",
     "margenes_3t": "Mejora márgenes durante tres trimestres consecutivos",
     "descuento_historico": "Cotiza con descuento frente a su valoración histórica",
+    "insiders": "Compras relevantes de directivos en mercado abierto",
+    "fondos_entrando": "Entra en carteras de nuevas gestoras",
 }
 
 PENDING_RULES = {
-    "insiders": (
-        "Compras relevantes de insiders — requiere el motor 8 (Form 4 de EDGAR, "
-        "dato disponible y gratuito, motor no implementado todavía)"
-    ),
-    "fondos_entrando": (
-        "Entra en carteras de grandes fondos — requiere el motor 8 (13F de EDGAR, "
-        "trimestral y con 45 días de retraso legal)"
-    ),
     "revision_al_alza": (
         "Revisa al alza sus previsiones — requiere estimaciones de analistas, que "
         "no existen en ninguna fuente gratuita"
@@ -54,6 +55,8 @@ def detect(
     rows += _rule_breakout(frame, as_of)
     rows += _rule_margin_streak(frame, as_of)
     rows += _rule_historic_discount(frame, as_of)
+    rows += _rule_insider_buying(frame, as_of)
+    rows += _rule_funds_entering(frame, as_of)
 
     if not rows:
         return pd.DataFrame(columns=["as_of", "cik", "ticker", "rule_id", "severity", "detail"])
@@ -166,6 +169,94 @@ def _rule_margin_streak(frame: pd.DataFrame, as_of: dt.date) -> list[dict]:
             "detail": (
                 f"{int(row['margin_improving_streak'])} trimestres consecutivos "
                 "mejorando margen operativo"
+            ),
+        }
+        for cik, row in subset.iterrows()
+    ]
+
+
+def _rule_insider_buying(frame: pd.DataFrame, as_of: dt.date) -> list[dict]:
+    """Compra en grupo de directivos, no una compra suelta.
+
+    Se exigen tres condiciones a la vez y ninguna sobra. Que compren al menos dos
+    personas distintas, porque una compra aislada puede responder a una circunstancia
+    personal y no a una lectura del negocio. Que el importe llegue al 0,2% del valor
+    de la empresa, porque una compra simbólica de un consejero es a veces un gesto de
+    imagen. Y que nadie esté vendiendo por decisión propia al mismo tiempo, porque un
+    equipo dividido no es una señal.
+    """
+    needed = ("ins_buyers_90d", "ins_net_to_mcap")
+    if not all(c in frame.columns for c in needed):
+        return []
+    mask = (
+        (frame["ins_buyers_90d"].fillna(0) >= 2)
+        & (frame["ins_net_to_mcap"].fillna(0) >= 0.002)
+        & (frame.get("ins_sellers_90d", pd.Series(0, index=frame.index)).fillna(0) == 0)
+    )
+    subset = frame[mask.fillna(False)]
+    return [
+        {
+            "as_of": as_of,
+            "cik": cik,
+            "ticker": row.get("ticker"),
+            "rule_id": "insiders",
+            "severity": "alta",
+            "detail": (
+                f"{int(row['ins_buyers_90d'])} directivos compraron en mercado abierto "
+                f"el {row['ins_net_to_mcap'] * 100:.2f}% de la empresa, sin ventas "
+                "discrecionales (dato del último trimestre publicado por la SEC)"
+            ),
+        }
+        for cik, row in subset.iterrows()
+    ]
+
+
+def _rule_funds_entering(frame: pd.DataFrame, as_of: dt.date) -> list[dict]:
+    """Entrada amplia de gestoras que antes no tenían el valor.
+
+    Los umbrales se fijaron midiendo la distribución real, no a ojo. Con un 15% de
+    crecimiento saltaban 201 avisos sobre 1.386 empresas, porque ese valor está en el
+    percentil 88 y describe un trimestre corriente; entre ellos, Corning y
+    Halliburton, que difícilmente son un descubrimiento. Al 25% quedan unas decenas.
+
+    El filtro de saturación es igual de necesario: en un valor con el 95% del capital
+    ya en manos institucionales, la entrada de gestoras nuevas no anticipa el
+    recorrido que busca el radar, porque el descubrimiento ya ocurrió.
+
+    El techo lo impone `features/ownership.py`, que declara desconocida cualquier
+    variación que duplique la base. Sin él esta alerta avisaría sobre todo de
+    escisiones y cambios de CUSIP.
+    """
+    needed = ("inst_holders_change_pct", "inst_new_positions", "inst_holders")
+    if not all(c in frame.columns for c in needed):
+        return []
+    saturation = frame.get("inst_ownership_pct")
+    not_crowded = (
+        saturation.fillna(0.0) < 0.85 if saturation is not None else pd.Series(True, index=frame.index)
+    )
+    mask = (
+        (frame["inst_holders_change_pct"] >= 0.25)
+        & (frame["inst_holders"] >= 25)
+        & (frame["inst_new_positions"] >= 10)
+        & not_crowded
+    )
+    subset = frame[mask.fillna(False)]
+    stamp = ""
+    if "inst_quarter" in frame.columns:
+        quarters = pd.to_datetime(frame["inst_quarter"], errors="coerce").dropna()
+        if not quarters.empty:
+            stamp = f" (13F del trimestre cerrado el {quarters.iloc[0].date()})"
+    return [
+        {
+            "as_of": as_of,
+            "cik": cik,
+            "ticker": row.get("ticker"),
+            "rule_id": "fondos_entrando",
+            "severity": "media",
+            "detail": (
+                f"{int(row['inst_new_positions'])} gestoras abren posición y el total "
+                f"crece un {row['inst_holders_change_pct'] * 100:.0f}%, hasta "
+                f"{int(row['inst_holders'])}{stamp}"
             ),
         }
         for cik, row in subset.iterrows()

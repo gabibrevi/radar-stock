@@ -97,6 +97,16 @@
   <div id="desc" class="desc"></div>
   <div class="tablebox"><div id="table"></div></div>
 
+  <details open>
+    <summary>Hasta qué fecha llega cada fuente</summary>
+    <div class="kv" id="freshness"></div>
+    <p class="desc">
+      Los datos de directivos y de posiciones institucionales se publican por
+      trimestres y pueden ir varios meses por detrás. Los motores 4 y 8 describen el
+      último trimestre publicado, no la sesión de hoy.
+    </p>
+  </details>
+
   <details>
     <summary>Reparto de pesos usado en esta ejecución</summary>
     <div class="kv" id="weights"></div>
@@ -180,7 +190,30 @@ function render() {
     .sort((a, b) => b[1] - a[1])
     .map(([k, v]) => `<span>${k}</span><span>${v.toFixed(1)}%</span>`).join("");
 
+  renderFreshness();
   paint();
+}
+
+// El retraso de cada fuente se muestra siempre, y se marca en ámbar por encima de
+// 45 días. Los datasets de insiders y de 13F se publican por trimestres y pueden ir
+// meses por detrás: sin este aviso, un motor institucional alto se lee como "los
+// fondos están entrando ahora" cuando puede describir el trimestre anterior.
+function renderFreshness() {
+  const el = document.getElementById("freshness");
+  if (!el) return;
+  const rows = DATA.frescura || [];
+  if (!rows.length) { el.innerHTML = ""; return; }
+  el.innerHTML = rows.map(r => {
+    const d = r.dias_de_retraso;
+    if (r.ultimo_dato === null || d === null) {
+      return `<span>${r.fuente}</span><span style="opacity:.5">sin datos</span>`;
+    }
+    const cls = d > 45 ? ' class="warn"' : "";
+    // Las fechas llegan serializadas como marca de tiempo completa; aquí solo
+    // interesa el día.
+    const day = String(r.ultimo_dato).slice(0, 10);
+    return `<span>${r.fuente}</span><span${cls}>${day} · ${d} d de retraso</span>`;
+  }).join("");
 }
 
 function pick(i) { current = i; render(); }

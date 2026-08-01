@@ -45,7 +45,7 @@ paquete de fundamentales cuesta unos 60 $/mes y cubre más de 70 bolsas.
 
 ### Estado de los 16 motores
 
-Seis de los dieciséis motores están implementados y funcionando. El peso de los
+Ocho de los dieciséis motores están implementados y funcionando. El peso de los
 que faltan **se redistribuye automáticamente** entre los activos, de modo que el
 score sigue siendo una cifra de 0 a 100 coherente; lo que no es, todavía, es la
 cifra completa que describe la especificación.
@@ -55,11 +55,11 @@ cifra completa que describe la especificación.
 | 1 · Calidad Fundamental | 15 | **Activo** | — |
 | 2 · Salud Financiera | 10 | **Activo** | — |
 | 3 · Valoración Inteligente | 10 | **Activo** (requiere clave de Polygon) | — |
-| 4 · Calidad del Management | 8 | Pendiente | Form 4 de EDGAR: dato gratuito y disponible |
+| 4 · Calidad del Management | 8 | **Activo** (parcial) | Solo mide operaciones de directivos; el historial del equipo necesita LLM |
 | 5 · Ventaja Competitiva | 8 | Pendiente | Análisis con LLM de los informes anuales |
 | 6 · Tendencias Globales | 8 | Pendiente | Clasificación temática con LLM |
 | 7 · Catalizadores | 8 | Pendiente | Formularios 8-K y noticias |
-| 8 · Institucional | 8 | Pendiente | 13F y Form 4 de EDGAR: gratuitos |
+| 8 · Institucional | 8 | **Activo** | — |
 | 9 · Sentimiento | 5 | Pendiente | Fuente muy limitada sin presupuesto |
 | 10 · Técnico | 7 | **Activo** (requiere clave de Polygon) | — |
 | 11 · Comparación Histórica | 5 | Pendiente | Requiere el panel histórico completo |
@@ -69,17 +69,57 @@ cifra completa que describe la especificación.
 | 15 · IA Predictiva | 3 | Pendiente | Requiere histórico de decisiones propias |
 | 16 · Asimetría | 10 | **Activo** (requiere clave de Polygon) | — |
 
-Dos advertencias sobre los motores pendientes que no se resuelven con esfuerzo:
+Tres advertencias que no se resuelven con esfuerzo:
 
 - El **motor 8** solo puede funcionar para EEUU. Los 13F son una obligación
   exclusivamente estadounidense, trimestral y con 45 días de retraso legal. Los
   *dark pools* que pedía la especificación no son datos públicos: lo único oficial
   es un fichero semanal agregado de FINRA.
+- Los **motores 4 y 8 van con retraso estructural**. Ambos se calculan sobre
+  datasets que la SEC publica por trimestres, así que describen el último trimestre
+  publicado y no la sesión de hoy: entre uno y cuatro meses atrás según el momento
+  del año. El radar lo muestra siempre, en `radar estado` y en el propio dashboard,
+  porque leer un motor institucional alto como "los fondos están entrando ahora"
+  sería un error de interpretación con consecuencias.
 - El **motor 9** dependía de X/Twitter, Google Trends y Seeking Alpha. La API de X
   cuesta hoy cientos de dólares al mes por un volumen mínimo, Google Trends solo
   es accesible por librerías no oficiales que se bloquean, y Seeking Alpha no
   tiene API y prohíbe el scraping. Será el motor más débil de los dieciséis y es
   mejor saberlo de antemano.
+
+### Qué mide realmente el motor 4, y qué no
+
+El motor de management no opina sobre si el consejero delegado es visionario: mide
+qué hace con su propio dinero. Tres distinciones lo separan del ruido que se suele
+vender como "compras de directivos", y las tres salieron de mirar los datos reales:
+
+- **Solo cuentan las compras en mercado abierto** (código `P` del formulario 4). Las
+  acciones concedidas como retribución y los ejercicios de opciones llegan por
+  calendario, no por convicción. Contarlas convierte cualquier plan de compensación
+  en una señal falsa de confianza.
+- **Solo cuentan las ventas discrecionales.** Una venta programada por un plan
+  10b5-1 se firmó meses antes. En un trimestre real había 12.928 ventas programadas
+  por 14.400 millones y 9.537 discrecionales por 119.500 millones: mezclarlas hace
+  que quien solo diversifica su patrimonio parezca estar huyendo.
+- **Los accionistas del 10% que no ocupan cargo van al motor 8**, no aquí. Sus
+  mayores movimientos son participaciones estratégicas: Genmab ampliando en su socia
+  Merus por 7.400 millones, el fondo soberano de Singapur, una matriz sobre su
+  participada. Es dinero muy informado, pero no es la dirección confiando en el
+  negocio que gestiona.
+
+Lo que no puede ver, porque no está en ningún formulario: si el fundador sigue al
+mando, la rotación del equipo directivo, y si las adquisiciones pasadas crearon o
+destruyeron valor.
+
+### Por qué el motor 8 penaliza tener demasiados fondos dentro
+
+La pregunta del motor institucional está deliberadamente invertida respecto a cómo
+se usa normalmente el 13F. Que una empresa tenga el 95% del capital en manos
+institucionales no es una virtud para este radar: significa que las mil gestoras que
+la iban a descubrir ya la descubrieron, y que el recorrido que buscamos —convertirse
+en la próxima Nvidia desde una posición ignorada— en gran medida ya ocurrió. El
+motor puntúa la cercanía a un punto óptimo en torno al 45%: validación profesional
+suficiente, con sitio de sobra para los que faltan.
 
 ### Un detalle de la especificación original
 
@@ -133,6 +173,7 @@ Comprueba que todo está en orden:
 ```bash
 ./radar fundamentales     # ~1 hora, descarga unos 3 GB de la SEC
 ./radar universo          # segundos
+./radar propiedad         # ~4 minutos (directivos y fondos)
 ./radar precios           # ~100 minutos por el límite de 5 peticiones/minuto
 ./radar puntuar           # ~2 minutos
 ```
@@ -141,6 +182,19 @@ El paso de fundamentales descarga los *Financial Statement Data Sets* de la SEC:
 un fichero por trimestre con todos los hechos numéricos de todas las empresas.
 Solo se hace una vez; después, cada ejecución descarga únicamente el trimestre
 nuevo cuando la SEC lo publica.
+
+El paso de propiedad alimenta los motores 4 y 8. Descarga tres cosas: las
+operaciones declaradas por directivos (unos 8 MB por trimestre), las posiciones
+declaradas en los 13F (unos 80 MB por trimestre) y un puente CUSIP → ticker.
+
+Ese puente merece una explicación, porque es el único punto del radar donde hubo que
+buscar un camino lateral. Los 13F identifican cada posición por CUSIP, y las tablas
+oficiales de CUSIP son un producto de licencia comercial que no se puede
+redistribuir. La solución son los ficheros de **fallos de entrega** que publica la
+propia SEC: se hicieron para vigilar las ventas en corto, pero incluyen las columnas
+CUSIP y SYMBOL. Acumulando seis meses se cubre el 85% del universo, y el 15% que
+queda fuera se marca como dato ausente en lugar de puntuarse como si no tuviera
+ningún fondo dentro.
 
 El de precios es lento por el límite del plan gratuito de Polygon, no por el
 código. Se puede cortar y reanudar en cualquier momento sin perder nada. Si tienes
@@ -259,6 +313,36 @@ Es una aproximación declarada, no una etiqueta.
 `DCF_ASSUMPTIONS`, dentro de `agor/features/valuation.py`. Un DCF con veinte
 parámetros ajustables no es más preciso, solo es más fácil de forzar hasta que dé
 el resultado que uno quería.
+
+**La ausencia de señal vale 50, no 0.** Cuando se añadieron los motores de propiedad
+apareció un incentivo perverso: una empresa cubierta por los datos de insiders pero
+sin ninguna operación en seis meses puntuaba unos 30, mientras que una empresa que
+no aparecía en el dataset no puntuaba en ese motor y su peso se repartía entre los
+demás, quedando neutra. Publicar información penalizaba. Los componentes de flujo de
+dinero usan por eso escalas absolutas centradas en cero: no haber pasado nada vale
+exactamente 50, comprar sube y vender por decisión propia baja.
+
+**Las operaciones corporativas se declaran desconocidas, no se puntúan.** Al medir la
+entrada de gestoras, la cabeza del ranking la ocupaban AstraZeneca pasando de 52 a
+1.313 gestoras y Pinnacle Financial de 48 a 631. Ninguna de las dos era acumulación:
+eran un cambio de CUSIP de un ADR y una fusión, con los mismos fondos de siempre
+reapareciendo bajo otra identidad. Con este dato no se puede distinguir una
+reidentificación de un descubrimiento real, así que cualquier variación que duplique
+la base se marca como desconocida. Se pierde algún caso genuino a cambio de no
+promocionar decenas de operaciones corporativas.
+
+**Los umbrales de las alertas se fijaron midiendo, no a ojo.** La alerta de entrada
+de fondos empezó pidiendo un 15% de crecimiento y saltaba en 201 de 1.386 empresas,
+entre ellas Corning y Halliburton: ese valor está en el percentil 88 y describe un
+trimestre corriente. Al 25%, y excluyendo lo que ya tiene más del 85% del capital en
+manos institucionales, quedan unas decenas y son nombres pequeños. Una alerta que
+salta en el 15% del universo no es una alerta.
+
+**Un precio declarado puede ser un error de relleno.** El primer trimestre de
+insiders que se cargó contenía una compra de 225 billones de dólares: el declarante
+había puesto el importe total de la operación en la casilla del precio por acción.
+Cada operación se contrasta contra la mediana de precios de la propia empresa, que es
+una referencia robusta y no necesita ningún dato de mercado.
 
 ---
 

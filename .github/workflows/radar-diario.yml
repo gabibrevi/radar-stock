@@ -59,6 +59,15 @@ jobs:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python -m agor.cli universo
 
+      # Directivos y fondos. Los datasets son trimestrales, así que la mayoría de los
+      # días este paso no descarga nada: la marca de agua detecta que el trimestre ya
+      # está cargado y termina en segundos. Va después del universo porque las
+      # posiciones de los 13F se emparejan por ticker.
+      - name: Operaciones de directivos y posiciones institucionales
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -m agor.cli propiedad
+
       # El plan gratuito de Polygon da 5 peticiones por minuto. Se limita a 240
       # sesiones por ejecución (unos 50 minutos) para que el histórico se complete
       # a lo largo de varios días sin que ningún día se dispare el tiempo de CI.

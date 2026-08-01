@@ -15,6 +15,9 @@ from rich.table import Table
 
 from .config import ENGINE_NAMES_ES, SPEC_WEIGHTS, ensure_dirs, load_settings
 from .ingest.fundamentals import backfill as backfill_fundamentals
+from .ingest.holdings import backfill as backfill_holdings
+from .ingest.holdings import refresh_cusip_map
+from .ingest.insiders import backfill as backfill_insiders
 from .ingest.prices import backfill_prices
 from .ingest.universe import refresh_universe, universe_report
 from .output import alerts as alerts_module
@@ -24,7 +27,7 @@ from .pipeline import PENDING_ENGINES, _active_weights, score
 from .providers.polygon import PolygonClient
 from .providers.sec import SecClient
 from .scoring.aggregate import calibration_report
-from .store import db, summary
+from .store import db, freshness, summary
 
 console = Console()
 
@@ -43,6 +46,13 @@ def cmd_estado(args) -> int:
     with db() as con:
         console.print("\n[bold]Contenido de la base de datos[/bold]")
         console.print(summary(con).to_string(index=False))
+        console.print("\n[bold]Frescura de cada fuente[/bold]")
+        console.print(freshness(con).to_string(index=False))
+        console.print(
+            "[dim]Los datasets de insiders y de 13F se publican por trimestres: "
+            "pueden ir varios meses por detrás. Los motores 4 y 8 describen el último "
+            "trimestre publicado, no el día de hoy.[/dim]"
+        )
         try:
             console.print("\n[bold]Universo por bolsa[/bold]")
             console.print(universe_report(con).to_string(index=False))
@@ -98,6 +108,34 @@ def cmd_fundamentales(args) -> int:
     return 0
 
 
+def cmd_propiedad(args) -> int:
+    """Insiders y 13F: los datos que alimentan los motores 4 y 8."""
+    settings = load_settings()
+    client = SecClient(settings.sec_user_agent)
+    with db() as con:
+        console.print("[bold]Operaciones de directivos[/bold] (unos 8 MB por trimestre)")
+        rows = backfill_insiders(con, client, quarters=args.trimestres_insiders)
+        console.print(f"  operaciones cargadas: {rows:,}")
+
+        console.print(
+            "\n[bold]Puente CUSIP → ticker[/bold]\n"
+            "[dim]Los 13F identifican las posiciones por CUSIP y las tablas oficiales "
+            "son de licencia comercial. Se construye con los ficheros de fallos de "
+            "entrega de la SEC, que son públicos.[/dim]"
+        )
+        pairs = refresh_cusip_map(con, client, months=args.meses_cusip)
+        console.print(f"  pares conocidos: {pairs:,}")
+
+        console.print(
+            "\n[bold]Posiciones institucionales 13F[/bold]\n"
+            "[dim]Unos 80 MB comprimidos y 320 MB en texto por trimestre. "
+            "Hacen falta al menos dos para poder medir entradas y salidas.[/dim]"
+        )
+        rows = backfill_holdings(con, client, files=args.trimestres_13f)
+        console.print(f"  posiciones cargadas: {rows:,}")
+    return 0
+
+
 def cmd_precios(args) -> int:
     settings = load_settings()
     if not settings.has_prices:
@@ -132,7 +170,13 @@ def cmd_puntuar(args) -> int:
         history_path = write_history(totals, as_of)
         report_dir = write_reports(rankings, detected, as_of)
         web_path = write_web_data(
-            rankings, detected, frame, calibration_report(frame), as_of, _active_weights()
+            rankings,
+            detected,
+            frame,
+            calibration_report(frame),
+            as_of,
+            _active_weights(),
+            freshness(con),
         )
 
     _print_rankings(rankings)
@@ -154,6 +198,11 @@ def cmd_todo(args) -> int:
     with db() as con:
         backfill_fundamentals(con, client, args.desde, keep_zips=args.conservar_zips)
         refresh_universe(con, client)
+        # El universo tiene que existir antes que los 13F: el mapeo de posiciones
+        # pasa por el ticker, y sin universo no habría nada con lo que emparejar.
+        backfill_insiders(con, client, quarters=8)
+        refresh_cusip_map(con, client, months=6)
+        backfill_holdings(con, client, files=4)
 
     if settings.has_prices:
         polygon = PolygonClient(settings.polygon_api_key)
@@ -191,6 +240,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--desde", type=int, default=2015, help="Año inicial (por defecto 2015)")
     p.add_argument("--conservar-zips", action="store_true", dest="conservar_zips")
     p.set_defaults(func=cmd_fundamentales)
+
+    p = sub.add_parser(
+        "propiedad", help="Descarga operaciones de directivos (motor 4) y 13F (motor 8)"
+    )
+    p.add_argument("--trimestres-insiders", type=int, default=8, dest="trimestres_insiders")
+    p.add_argument("--trimestres-13f", type=int, default=4, dest="trimestres_13f")
+    p.add_argument("--meses-cusip", type=int, default=6, dest="meses_cusip")
+    p.set_defaults(func=cmd_propiedad)
 
     p = sub.add_parser("precios", help="Descarga cotizaciones desde Polygon")
     p.add_argument("--anios", type=int, default=2)

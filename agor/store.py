@@ -14,6 +14,7 @@ seis meses fueron acertadas.
 
 from __future__ import annotations
 
+import datetime as dt
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -100,6 +101,58 @@ CREATE TABLE IF NOT EXISTS shares_outstanding (
     period_end DATE,
     shares     DOUBLE,
     PRIMARY KEY (cik, period_end)
+);
+
+-- Operaciones de insiders (formularios 3, 4 y 5) desde el dataset trimestral de
+-- la SEC. El campo `planned_10b5_1` es el que da valor a esta tabla: permite
+-- separar la venta programada meses antes por un plan automático, que no informa
+-- de nada, de la venta discrecional, que sí.
+CREATE TABLE IF NOT EXISTS insider_transactions (
+    accn            VARCHAR,
+    trans_sk        VARCHAR,
+    issuer_cik      BIGINT,
+    ticker          VARCHAR,
+    owner_cik       BIGINT,
+    owner_name      VARCHAR,
+    relationship    VARCHAR,
+    title           VARCHAR,
+    is_officer      BOOLEAN,
+    is_director     BOOLEAN,
+    is_ten_percent  BOOLEAN,
+    trans_date      DATE,
+    filing_date     DATE,
+    trans_code      VARCHAR,
+    shares          DOUBLE,
+    price           DOUBLE,
+    value_usd       DOUBLE,
+    acquired        BOOLEAN,
+    shares_after    DOUBLE,
+    direct          BOOLEAN,
+    planned_10b5_1  BOOLEAN,
+    PRIMARY KEY (accn, trans_sk)
+);
+
+-- Posiciones declaradas en los 13F, a nivel de gestora y valor. Solo se conservan
+-- los trimestres recientes: lo que aporta señal es la variación entre trimestres,
+-- no el histórico profundo, y la tabla crece más de un millón de filas por
+-- trimestre.
+CREATE TABLE IF NOT EXISTS institutional_holdings (
+    quarter     DATE,
+    manager_cik BIGINT,
+    cusip       VARCHAR,
+    value_usd   DOUBLE,
+    shares      DOUBLE,
+    PRIMARY KEY (quarter, manager_cik, cusip)
+);
+
+-- Puente CUSIP -> ticker construido con los ficheros de fallos de entrega de la
+-- SEC. Los 13F identifican las posiciones por CUSIP y las tablas oficiales de
+-- CUSIP son de licencia comercial; este es el camino gratuito y legal.
+CREATE TABLE IF NOT EXISTS cusip_map (
+    cusip       VARCHAR PRIMARY KEY,
+    ticker      VARCHAR,
+    description VARCHAR,
+    last_seen   DATE
 );
 
 -- Append-only. Memoria histórica del radar.
@@ -234,12 +287,48 @@ def table_count(con: duckdb.DuckDBPyConnection, table: str) -> int:
     return con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
 
+def freshness(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    """Hasta qué fecha llega cada fuente, y cuántos días de retraso acumula.
+
+    Es una salida de primer orden, no un diagnóstico secundario. Las fuentes del
+    radar tienen retrasos estructurales muy distintos y confundirlos lleva a leer
+    como actual algo que no lo es: los precios llegan del día anterior, pero los
+    datasets de insiders y de 13F se publican por trimestres y pueden ir cuatro
+    meses por detrás. Un motor 4 en 90 puntos no significa que los directivos estén
+    comprando hoy, sino que compraron en el último trimestre publicado.
+    """
+    sources = [
+        ("prices", "max(date)", "Cotizaciones"),
+        ("fundamentals_raw", "max(filed)", "Fundamentales (SEC)"),
+        ("insider_transactions", "max(filing_date)", "Operaciones de directivos"),
+        ("institutional_holdings", "max(quarter)", "Posiciones institucionales (13F)"),
+    ]
+    today = dt.date.today()
+    rows = []
+    for table, expression, label in sources:
+        try:
+            latest = con.execute(f"SELECT {expression} FROM {table}").fetchone()[0]
+        except duckdb.Error:
+            latest = None
+        rows.append(
+            {
+                "fuente": label,
+                "ultimo_dato": latest,
+                "dias_de_retraso": (today - latest).days if latest else None,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def summary(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     tables = [
         "universe",
         "fundamentals_raw",
         "prices",
         "shares_outstanding",
+        "insider_transactions",
+        "institutional_holdings",
+        "cusip_map",
         "score_snapshots",
         "score_totals",
         "alerts",

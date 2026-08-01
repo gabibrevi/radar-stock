@@ -151,10 +151,30 @@ RANKINGS: tuple[Ranking, ...] = (
     Ranking(
         "institutional",
         "Top 20 compras institucionales recientes",
-        "PENDIENTE: requiere formularios 13F y Form 4, que ya están disponibles en "
-        "EDGAR pero cuyo motor (el 8) todavía no está implementado.",
-        lambda f: pd.Series(False, index=f.index),
-        requires=("score_e08_institutional",),
+        "Gestoras entrando en el valor y directivos comprando en mercado abierto, "
+        "cuando todavía queda sitio para que entre más dinero profesional. Se calcula "
+        "sobre los datasets trimestrales de la SEC: describe el último trimestre "
+        "publicado, no la sesión de hoy.",
+        # Se exige flujo institucional y que no esté ya saturado. Sin el segundo
+        # filtro el ranking se llenaría de valores con el 95% del capital en manos
+        # institucionales, donde el descubrimiento que busca el radar ya ocurrió.
+        lambda f: (_series(f, "inst_holders_change_pct") > 0.10)
+        & (_series(f, "inst_holders") >= 25)
+        & (_series(f, "inst_ownership_pct").fillna(0.0) < 0.85),
+        sort_by="score_e08_institutional",
+        requires=("score_e08_institutional", "inst_holders_change_pct"),
+    ),
+    Ranking(
+        "insider_conviction",
+        "Top 20 convicción de los directivos",
+        "Varios directivos comprando acciones con su propio dinero y a precio de "
+        "mercado, sin ventas discrecionales en paralelo. Excluye acciones entregadas "
+        "como retribución y ejercicios de opciones, que llegan por calendario y no "
+        "son decisiones de inversión.",
+        lambda f: (_series(f, "ins_net_buyers_90d") >= 2)
+        & (_series(f, "ins_net_to_mcap") > 0.001),
+        sort_by="score_e04_management",
+        requires=("score_e04_management", "ins_net_buyers_90d"),
     ),
 )
 
