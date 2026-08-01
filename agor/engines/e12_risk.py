@@ -1,23 +1,15 @@
-"""Motor 12 — Riesgo (peso 5), solo la capa numérica.
+"""Motor 12 — Riesgo (peso 5).
 
 Responde a: ¿cuánto puede romperse esta tesis por fragilidad del propio negocio,
 no por el precio de la acción?
 
-La parte cualitativa del enunciado (litigios, gobernanza, dependencia de un
-cliente, riesgo geopolítico) necesita leer 10-K con un modelo de lenguaje y queda
-fuera a propósito. Mentir y puntuarlo con un proxy débil sería peor que dejarlo
-pendiente. Aquí solo entra lo que ya está en el panel y en los precios:
-
-- volatilidad de los resultados (ingresos),
-- inconsistencia de la rentabilidad,
-- dependencia de diluir para financiarse,
-- cobertura de intereses y runway cuando quema caja,
-- volatilidad de mercado si hay precios.
+Capa numérica (panel + precios) siempre; capa cualitativa (gobernanza, litigios,
+concentración) vía Gemini en el Top N. Sin LLM esos componentes quedan NaN y su
+peso se redistribuye — no se inventan proxies.
 
 Se solapa parcialmente con el motor 2 (salud financiera) a propósito: aquel
 pregunta si puede crecer sin pedir dinero; este pregunta si el perfil de riesgo
-es aceptable para una apuesta a 5-10 años. Un negocio sólido pero errático puede
-aprobar salud y suspender riesgo.
+es aceptable para una apuesta a 5-10 años.
 """
 
 from __future__ import annotations
@@ -83,6 +75,35 @@ class RiskEngine(ComponentEngine):
             1.0,
             higher_is_better=False,
             absolute=(0.01, 0.08),
+        ),
+        # Capa cualitativa LLM (Top N). Ausente ⇒ peso redistribuido.
+        Component(
+            "risk_qual",
+            "risk_qual_score",
+            "Riesgo cualitativo global (LLM)",
+            2.0,
+            absolute=(20.0, 90.0),
+        ),
+        Component(
+            "risk_governance",
+            "risk_governance",
+            "Gobernanza / dilución (LLM)",
+            1.0,
+            absolute=(20.0, 90.0),
+        ),
+        Component(
+            "risk_litigation",
+            "risk_litigation",
+            "Perfil litigioso inferido (LLM)",
+            0.75,
+            absolute=(20.0, 90.0),
+        ),
+        Component(
+            "risk_concentration",
+            "risk_concentration",
+            "Diversificación / no fragilidad (LLM)",
+            0.75,
+            absolute=(20.0, 90.0),
         ),
     )
 

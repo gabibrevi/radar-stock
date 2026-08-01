@@ -222,6 +222,26 @@ CREATE TABLE IF NOT EXISTS llm_moat (
     raw_json         VARCHAR,
     PRIMARY KEY (cik, as_of, model)
 );
+
+-- Megatrends + catalizadores + riesgo cualitativo (una llamada Gemini por fila).
+CREATE TABLE IF NOT EXISTS llm_themes (
+    cik                     BIGINT,
+    as_of                   DATE,
+    model                   VARCHAR,
+    mega_score              DOUBLE,
+    mega_alignment          DOUBLE,
+    mega_themes             VARCHAR,
+    catalyst_score          DOUBLE,
+    catalyst_clarity        DOUBLE,
+    catalyst_horizon_years  DOUBLE,
+    risk_qual_score         DOUBLE,
+    risk_governance         DOUBLE,
+    risk_litigation         DOUBLE,
+    risk_concentration      DOUBLE,
+    rationale               VARCHAR,
+    raw_json                VARCHAR,
+    PRIMARY KEY (cik, as_of, model)
+);
 """
 
 

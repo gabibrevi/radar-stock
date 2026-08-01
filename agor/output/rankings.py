@@ -44,9 +44,17 @@ DISPLAY_COLUMNS = [
     "score_e02_financial_health",
     "score_e03_valuation",
     "score_e04_management",
+    "score_e05_moat",
+    "score_e06_megatrends",
+    "score_e07_catalysts",
     "score_e08_institutional",
+    "score_e09_sentiment",
     "score_e10_technical",
+    "score_e11_historical_analogs",
+    "score_e12_risk",
+    "score_e13_macro",
     "score_e14_fundamental_momentum",
+    "score_e15_predictive_ai",
     "score_e16_asymmetry",
     # Contexto de los motores de propiedad: sin estas cifras, un 90 en institucional
     # no dice si entraron veinte gestoras o si ya estaban todas dentro.
