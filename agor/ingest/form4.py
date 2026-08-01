@@ -69,7 +69,10 @@ def topup(
         rows: list[dict] = []
         for accession, path in filings:
             try:
-                rows.extend(_parse(client.filing_text(path), accession))
+                # `day` es la fecha de presentación: el índice diario lista lo
+                # presentado ese día. No se usa periodOfReport del XML, que es la
+                # fecha de la operación y quedaba mal guardada como filing_date.
+                rows.extend(_parse(client.filing_text(path), accession, filing_date=day))
             except (ET.ParseError, ValueError, KeyError):
                 # Un formulario mal formado no debe abortar el día entero. Son raros y
                 # el dataset trimestral los traerá corregidos más adelante.
@@ -105,8 +108,13 @@ def _resume_from(con: duckdb.DuckDBPyConnection, horizon_days: int) -> dt.date:
     return min(bulk_latest, dt.date.today()) + dt.timedelta(days=1)
 
 
-def _parse(text: str, accession: str) -> list[dict]:
-    """Extrae las operaciones no derivadas de un formulario 4."""
+def _parse(text: str, accession: str, filing_date: dt.date) -> list[dict]:
+    """Extrae las operaciones no derivadas de un formulario 4.
+
+    `filing_date` viene del índice diario (el día de la presentación), no del XML.
+    `periodOfReport` es la fecha de la operación o del periodo reportado: usarlo
+    como filing_date hacía que freshness() y los filtros as-of mintieran.
+    """
     match = OWNERSHIP_BLOCK.search(text)
     if not match:
         return []
@@ -123,7 +131,6 @@ def _parse(text: str, accession: str) -> list[dict]:
     if symbol in ("", "NONE", "N/A", "NA", "-", "0"):
         symbol = None
 
-    filed = _date(_text(root, "periodOfReport"))
     planned = _flag_anywhere(root, "aff10b5one")
 
     # Un formulario puede declararse por varios titulares. Se toma el primero, igual
@@ -179,7 +186,7 @@ def _parse(text: str, accession: str) -> list[dict]:
                 "is_director": is_director,
                 "is_ten_percent": is_ten,
                 "trans_date": _date(_value(node, "transactionDate")),
-                "filing_date": filed,
+                "filing_date": filing_date,
                 "trans_code": code,
                 "shares": shares,
                 "price": price,

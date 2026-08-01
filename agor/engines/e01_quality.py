@@ -10,7 +10,9 @@ ROIC captura si ese crecimiento crea valor o solo lo consume. Es la diferencia
 entre una compounder y una empresa que parece buena en la cuenta de resultados.
 
 La descalificación por deterioro estructural que pide el enunciado se implementa
-en `disqualify`: no basta con puntuar bajo, la empresa desaparece del ranking.
+en `disqualify` y la agregación la propaga al score total: no basta con anular
+este motor (eso redistribuiría su peso entre los demás); la empresa queda sin
+puntuación final.
 """
 
 from __future__ import annotations

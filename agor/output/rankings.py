@@ -188,7 +188,7 @@ RANKINGS: tuple[Ranking, ...] = (
         "como retribución y ejercicios de opciones, que llegan por calendario y no "
         "son decisiones de inversión.",
         lambda f: (_series(f, "ins_net_buyers_90d") >= 2)
-        & (_series(f, "ins_net_to_mcap") > 0.001),
+        & (_series(f, "ins_net_to_mcap") >= 0.002),
         sort_by="score_e04_management",
         requires=("score_e04_management", "ins_net_buyers_90d"),
     ),

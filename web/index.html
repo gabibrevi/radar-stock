@@ -126,12 +126,23 @@ const BANDS = {
   "Exceptional Buy": "b-exceptional", "Strong Buy": "b-strong", "Buy": "b-buy",
   "Watchlist Premium": "b-watch", "Watchlist": "b-watch", "No invertir": "b-no",
 };
+function esc(v) {
+  // Los nombres y detalles vienen de la SEC y se pintan en Pages público.
+  // Sin escape, un título con <script> o comillas rompería el HTML o abriría XSS.
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const COLS = [
-  ["ticker", "Ticker", v => `<span class="tick">${v ?? ""}</span>`],
-  ["name", "Empresa", v => trunc(v, 34)],
-  ["sector", "Sector", v => v ?? ""],
-  ["total", "Score", v => v == null ? "—" : `<b>${v.toFixed(1)}</b>`],
-  ["band", "Banda", v => v ? `<span class="badge ${BANDS[v] ?? "b-no"}">${v}</span>` : ""],
+  ["ticker", "Ticker", v => `<span class="tick">${esc(v)}</span>`],
+  ["name", "Empresa", v => esc(trunc(v, 34))],
+  ["sector", "Sector", v => esc(v)],
+  ["total", "Score", v => v == null ? "—" : `<b>${Number(v).toFixed(1)}</b>`],
+  ["band", "Banda", v => v ? `<span class="badge ${BANDS[v] ?? "b-no"}">${esc(v)}</span>` : ""],
   ["coverage", "Cob.", bar],
   ["market_cap", "Capitaliz.", money],
   ["revenue_ttm_cagr_3y", "Crec. 3a", pct],
@@ -166,8 +177,8 @@ fetch("data/radar.json?" + Date.now())
   .then(r => r.ok ? r.json() : Promise.reject(r.status))
   .then(d => { DATA = d; render(); })
   .catch(e => {
-    document.getElementById("stamp").innerHTML =
-      `<span class="warn">No se encuentra data/radar.json. Ejecuta primero <code>./radar puntuar</code>.</span>`;
+    document.getElementById("stamp").textContent =
+      "No se encuentra data/radar.json. Ejecuta primero ./radar puntuar.";
   });
 
 function render() {
@@ -181,15 +192,15 @@ function render() {
     ["Buy", dist["Buy"] || 0],
     ["Watchlist", (dist["Watchlist"] || 0) + (dist["Watchlist Premium"] || 0)],
     ["Alertas hoy", (DATA.alertas || []).length],
-  ].map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  ].map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`).join("");
 
   document.getElementById("tabs").innerHTML = DATA.rankings
-    .map((r, i) => `<button class="${i === current ? "on" : ""}" onclick="pick(${i})">${r.titulo.replace("Top 20 ", "")} <span style="opacity:.6">${r.filas.length}</span></button>`)
+    .map((r, i) => `<button class="${i === current ? "on" : ""}" onclick="pick(${i})">${esc(r.titulo.replace("Top 20 ", ""))} <span style="opacity:.6">${r.filas.length}</span></button>`)
     .join("") + `<button class="${current === -1 ? "on" : ""}" onclick="pick(-1)">Alertas <span style="opacity:.6">${(DATA.alertas || []).length}</span></button>`;
 
   document.getElementById("weights").innerHTML = Object.entries(DATA.pesos || {})
     .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `<span>${k}</span><span>${v.toFixed(1)}%</span>`).join("");
+    .map(([k, v]) => `<span>${esc(k)}</span><span>${v.toFixed(1)}%</span>`).join("");
 
   renderFreshness();
   paint();
@@ -207,13 +218,13 @@ function renderFreshness() {
   el.innerHTML = rows.map(r => {
     const d = r.dias_de_retraso;
     if (r.ultimo_dato === null || d === null) {
-      return `<span>${r.fuente}</span><span style="opacity:.5">sin datos</span>`;
+      return `<span>${esc(r.fuente)}</span><span style="opacity:.5">sin datos</span>`;
     }
     const cls = d > 45 ? ' class="warn"' : "";
     // Las fechas llegan serializadas como marca de tiempo completa; aquí solo
     // interesa el día.
     const day = String(r.ultimo_dato).slice(0, 10);
-    return `<span>${r.fuente}</span><span${cls}>${day} · ${d} d de retraso</span>`;
+    return `<span>${esc(r.fuente)}</span><span${cls}>${esc(day)} · ${d} d de retraso</span>`;
   }).join("");
 }
 
@@ -228,7 +239,7 @@ function paint() {
     const rows = DATA.alertas || [];
     if (!rows.length) { tableEl.innerHTML = `<div class="empty">Ninguna alerta hoy.</div>`; return; }
     tableEl.innerHTML = `<table><thead><tr><th>Ticker</th><th>Regla</th><th>Gravedad</th><th>Detalle</th></tr></thead><tbody>` +
-      rows.map(r => `<tr><td class="tick">${r.ticker ?? ""}</td><td>${r.rule_id}</td><td>${r.severity}</td><td style="text-align:left">${r.detail}</td></tr>`).join("") +
+      rows.map(r => `<tr><td class="tick">${esc(r.ticker)}</td><td>${esc(r.rule_id)}</td><td>${esc(r.severity)}</td><td style="text-align:left">${esc(r.detail)}</td></tr>`).join("") +
       `</tbody></table>`;
     return;
   }
@@ -240,7 +251,7 @@ function paint() {
     return;
   }
   const cols = COLS.filter(([k]) => r.filas.some(row => k in row));
-  tableEl.innerHTML = `<table><thead><tr>` + cols.map(([, h]) => `<th>${h}</th>`).join("") +
+  tableEl.innerHTML = `<table><thead><tr>` + cols.map(([, h]) => `<th>${esc(h)}</th>`).join("") +
     `</tr></thead><tbody>` +
     r.filas.map(row => `<tr>` + cols.map(([k, , f]) => `<td>${f(row[k])}</td>`).join("") + `</tr>`).join("") +
     `</tbody></table>`;

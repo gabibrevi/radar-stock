@@ -178,20 +178,17 @@ def _rule_margin_streak(frame: pd.DataFrame, as_of: dt.date) -> list[dict]:
 def _rule_insider_buying(frame: pd.DataFrame, as_of: dt.date) -> list[dict]:
     """Compra en grupo de directivos, no una compra suelta.
 
-    Se exigen tres condiciones a la vez y ninguna sobra. Que compren al menos dos
-    personas distintas, porque una compra aislada puede responder a una circunstancia
-    personal y no a una lectura del negocio. Que el importe llegue al 0,2% del valor
-    de la empresa, porque una compra simbólica de un consejero es a veces un gesto de
-    imagen. Y que nadie esté vendiendo por decisión propia al mismo tiempo, porque un
-    equipo dividido no es una señal.
+    Mismos umbrales que el ranking `insider_conviction`: varios directivos netos
+    comprando y un importe material sobre la capitalización. Antes la alerta usaba
+    compradores brutos y el ranking compradores netos, así que las listas no
+    coincidían.
     """
-    needed = ("ins_buyers_90d", "ins_net_to_mcap")
+    needed = ("ins_net_buyers_90d", "ins_net_to_mcap")
     if not all(c in frame.columns for c in needed):
         return []
     mask = (
-        (frame["ins_buyers_90d"].fillna(0) >= 2)
+        (frame["ins_net_buyers_90d"].fillna(0) >= 2)
         & (frame["ins_net_to_mcap"].fillna(0) >= 0.002)
-        & (frame.get("ins_sellers_90d", pd.Series(0, index=frame.index)).fillna(0) == 0)
     )
     subset = frame[mask.fillna(False)]
     return [
@@ -202,9 +199,9 @@ def _rule_insider_buying(frame: pd.DataFrame, as_of: dt.date) -> list[dict]:
             "rule_id": "insiders",
             "severity": "alta",
             "detail": (
-                f"{int(row['ins_buyers_90d'])} directivos compraron en mercado abierto "
-                f"el {row['ins_net_to_mcap'] * 100:.2f}% de la empresa, sin ventas "
-                "discrecionales (dato del último trimestre publicado por la SEC)"
+                f"{int(row['ins_net_buyers_90d'])} directivos netos compraron en mercado "
+                f"abierto el {row['ins_net_to_mcap'] * 100:.2f}% de la empresa "
+                "(dato del último trimestre publicado por la SEC / Form 4 diario)"
             ),
         }
         for cik, row in subset.iterrows()

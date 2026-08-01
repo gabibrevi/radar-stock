@@ -73,17 +73,39 @@ def aggregate(
     )
     total = total.mask(insufficient)
 
+    # Descalificación dura: un motor que marca a una empresa (hoy e01 por deterioro
+    # estructural) no basta con anular su propio score. Si solo se anula ese motor,
+    # la agregación redistribuye su peso entre los demás y la empresa puede seguir
+    # en el Top 20. Aquí el total desaparece, que es lo que promete el enunciado.
+    disqualified = _hard_disqualifications(results, ctx.index)
+    total = total.mask(disqualified != "")
+
     frame = pd.DataFrame(
         {
             "total": total.round(2),
             "coverage": overall_coverage.round(3),
             "engines_scored": available.sum(axis=1),
             "weight_applied": weight_applied.round(3),
+            "disqualified": disqualified,
         },
         index=ctx.index,
     )
     frame["band"] = _bands_with_coverage_floor(frame["total"], frame["coverage"])
+    frame["band"] = frame["band"].mask(disqualified != "", "Descalificada")
     return frame.join(scores.add_prefix("score_")).join(coverage.add_prefix("cov_"))
+
+
+def _hard_disqualifications(results: list[EngineResult], index: pd.Index) -> pd.Series:
+    """Primera razón de descalificación no vacía de cualquier motor, o cadena vacía."""
+    reasons = pd.Series("", index=index, dtype="object")
+    for result in results:
+        if result.disqualified is None or result.disqualified.empty:
+            continue
+        hit = result.disqualified.reindex(index).fillna("")
+        hit = hit.where(hit != "", other="")
+        take = (reasons == "") & (hit != "")
+        reasons = reasons.mask(take, hit)
+    return reasons
 
 
 def _bands_with_coverage_floor(total: pd.Series, coverage: pd.Series) -> pd.Series:

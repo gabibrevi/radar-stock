@@ -306,7 +306,11 @@ def _add_derived(wide: pd.DataFrame) -> pd.DataFrame:
     # Regla de 40: crecimiento más margen de caja libre. Referencia estándar para
     # negocios en expansión, donde exigir rentabilidad ya alta descartaría
     # justamente a las candidatas que busca el radar.
-    w["rule_of_40"] = (yoy.fillna(0) + w["fcf_margin"].fillna(0)) * 100.0
+    #
+    # Sin fillna: un dato ausente no es un cero. Imputar convertía "no sabemos el
+    # margen FCF" en "Rule of 40 = solo el crecimiento", y contaminaba e14.
+    fcf_m = w["fcf_margin"] if "fcf_margin" in w.columns else pd.Series(np.nan, index=w.index)
+    w["rule_of_40"] = (yoy + fcf_m) * 100.0
 
     # --- Momentum: variación interanual de cada margen -------------------
     # Se compara contra el mismo trimestre del año anterior y no contra el

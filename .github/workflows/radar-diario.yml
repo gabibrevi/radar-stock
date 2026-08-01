@@ -25,6 +25,13 @@ jobs:
   radar:
     runs-on: ubuntu-latest
     timeout-minutes: 330
+    # Los secretos se exponen a nivel de job para que los `if:` de cada paso puedan
+    # verlos. Si se inyectan solo dentro del step, `env.POLYGON_API_KEY` está vacío
+    # al evaluar la condición y el paso de precios se salta aunque el secreto exista.
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
@@ -50,13 +57,9 @@ jobs:
             agor-db-
 
       - name: Fundamentales de la SEC
-        env:
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python -m agor.cli fundamentales --desde ${{ github.event.inputs.desde_anio || '2015' }}
 
       - name: Universo
-        env:
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python -m agor.cli universo
 
       # Directivos y fondos. Los datasets son trimestrales, así que la mayoría de los
@@ -64,8 +67,6 @@ jobs:
       # está cargado y termina en segundos. Va después del universo porque las
       # posiciones de los 13F se emparejan por ticker.
       - name: Operaciones de directivos y posiciones institucionales
-        env:
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python -m agor.cli propiedad
 
       # El plan gratuito de Polygon da 5 peticiones por minuto. Se limita a 240
@@ -73,16 +74,9 @@ jobs:
       # a lo largo de varios días sin que ningún día se dispare el tiempo de CI.
       - name: Precios
         if: env.POLYGON_API_KEY != ''
-        env:
-          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python -m agor.cli precios --max-dias 240
 
       - name: Puntuar y generar rankings
-        env:
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python -m agor.cli puntuar
 
       - name: Guardar base de datos en la caché
