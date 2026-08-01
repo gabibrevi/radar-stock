@@ -40,10 +40,17 @@ def backfill_prices(
     today = dt.date.today()
     start = today - dt.timedelta(days=int(365.25 * years))
 
-    existing = set(
-        con.execute("SELECT DISTINCT date FROM prices").fetchdf()["date"].tolist()
-    )
-    existing = {d if isinstance(d, dt.date) else pd.Timestamp(d).date() for d in existing}
+    # La conversión a `date` es incondicional a propósito. DuckDB devuelve estas
+    # fechas como pandas.Timestamp, que hereda de datetime.date, así que un
+    # `isinstance(d, dt.date)` las da por buenas y las deja sin convertir. Pero un
+    # Timestamp a medianoche no es igual —ni comparte hash— con el date del mismo
+    # día, de modo que ninguna sesión se reconocía como ya descargada: cada
+    # ejecución volvía a empezar por la más reciente y el trabajo hecho no contaba.
+    # Con cinco peticiones por minuto de cuota, reanudar mal cuesta horas.
+    existing = {
+        pd.Timestamp(d).date()
+        for d in con.execute("SELECT DISTINCT date FROM prices").fetchdf()["date"]
+    }
     holidays = set((get_watermark(con, "polygon_holidays") or "").split(",")) - {""}
 
     candidates = [

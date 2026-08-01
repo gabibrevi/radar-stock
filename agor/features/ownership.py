@@ -134,6 +134,13 @@ def insider_metrics(con: duckdb.DuckDBPyConnection, as_of: dt.date) -> pd.DataFr
         -- Capital comprometido: se toma la última posición declarada por cada
         -- titular y solo la titularidad directa, porque sumar la indirecta contaría
         -- dos veces las mismas acciones a través de fideicomisos y sociedades.
+        --
+        -- El tope superior de fecha no sobra. Las ventanas de actividad ya lo
+        -- llevaban, pero esta consulta ordena por fecha descendente para quedarse con
+        -- la declaración más reciente, así que una fecha mal tecleada gana siempre:
+        -- son cuatro operaciones en 437.000, con años como 2027 y 2028 declarados en
+        -- enero y marzo de 2026, y bastan para que la participación de un directivo de
+        -- Alphabet o de Porch la fije una fila errónea en lugar de la última real.
         stake AS (
             SELECT cik, sum(shares_after) AS ins_shares_held FROM (
                 SELECT issuer_cik AS cik, owner_cik, shares_after,
@@ -142,6 +149,7 @@ def insider_metrics(con: duckdb.DuckDBPyConnection, as_of: dt.date) -> pd.DataFr
                 FROM mgmt
                 WHERE direct AND shares_after IS NOT NULL
                   AND trans_date >= $as_of - INTERVAL 400 DAY
+                  AND trans_date <= $as_of
             ) WHERE rn = 1
             GROUP BY cik
         ),
