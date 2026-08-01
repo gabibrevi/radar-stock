@@ -38,6 +38,14 @@ def build_panel(con: duckdb.DuckDBPyConnection, min_period: str = "2010-01-01") 
     los informes: un 10-K de 2018 puede contener cifras etiquetadas con fechas de
     los años noventa, y dejarlas dentro llena el panel de filas huérfanas que
     rompen los cálculos de ventanas móviles.
+
+    Por el otro extremo se descartan las fechas futuras. Son errores de tecleo en el
+    formulario y en la carga de diez años había quince, con años como 2923 y 2215.
+    Son poquísimas, pero el daño no es proporcional a su número: el radar toma como
+    estado actual de cada empresa su periodo más reciente, así que una sola fila con
+    el año mal escrito convierte a esa empresa en un trimestre casi vacío del siglo
+    XXX. Afectaba a ocho empresas, que habrían quedado sin puntuación sin motivo
+    aparente.
     """
     wide = _pivot(con, min_period)
     if wide.empty:
@@ -68,6 +76,9 @@ def _pivot(con: duckdb.DuckDBPyConnection, min_period: str) -> pd.DataFrame:
         FROM fundamentals_raw f
         JOIN _priority p ON p.concept = f.concept
         WHERE f.period_end >= DATE '{min_period}'
+          -- Margen de un año sobre hoy: los cierres de ejercicio se declaran por
+          -- adelantado y un trimestre futuro legítimo es normal.
+          AND f.period_end <= CURRENT_DATE + INTERVAL 1 YEAR
           AND (
                 (p.kind = 'stock' AND f.qtrs = 0)
              OR (p.kind = 'flow'  AND f.qtrs BETWEEN 1 AND 4)

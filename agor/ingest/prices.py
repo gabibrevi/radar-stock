@@ -64,10 +64,41 @@ def backfill_prices(
         # Se descartan los tickers con sufijos de clases exóticas y warrants, que
         # no corresponden a acciones ordinarias comparables.
         frame = frame[~frame["ticker"].str.contains(r"[.\-]W$|[.\-]U$|[.\-]R$", regex=True)]
+        frame = _resolve_ticker_collisions(frame)
         total += upsert(con, "prices", frame, ["ticker", "date"])
         console.print(f"  [green]{day}[/green]: {len(frame):,} tickers")
 
     return total
+
+
+def _resolve_ticker_collisions(frame: pd.DataFrame) -> pd.DataFrame:
+    """Deja una sola fila por ticker y sesión.
+
+    Polygon devuelve de vez en cuando el mismo símbolo dos veces en la misma sesión,
+    y no con una diferencia de céntimos: en la sesión del 31 de julio de 2026, BCPC
+    aparecía a la vez a 24,10 y a 167,56 dólares, y TPC a 17,15 y a 83,75. Son dos
+    compañías distintas compartiendo símbolo, normalmente porque una acaba de cambiar
+    de ticker y la otra lo ha heredado.
+
+    Se conserva la fila con más volumen en dólares, que es la cotización principal:
+    en el caso de BCPC, la de 167,56 con 346.000 títulos negociados frente a los
+    24.000 de la otra, que corresponde a Balchem. Descartar las dos sería peor, porque
+    perdería una empresa legítima por culpa de un residuo.
+
+    Sin esto la descarga entera aborta con un error de clave duplicada en la primera
+    sesión que contenga una colisión, que es exactamente lo que ocurrió.
+    """
+    if frame.empty or not frame["ticker"].duplicated().any():
+        return frame
+    turnover = frame["close"] * frame["volume"]
+    return (
+        frame.assign(_turnover=turnover)
+        .sort_values("_turnover", ascending=False)
+        .drop_duplicates(subset=["ticker", "date"], keep="first")
+        .drop(columns="_turnover")
+        .sort_values("ticker")
+        .reset_index(drop=True)
+    )
 
 
 def latest_prices(con: duckdb.DuckDBPyConnection, lookback_days: int = 420) -> pd.DataFrame:
