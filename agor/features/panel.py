@@ -271,14 +271,18 @@ def _add_derived(wide: pd.DataFrame) -> pd.DataFrame:
             past = _lag(w, metric, lag)
             w[f"{metric}_cagr_{label}"] = _cagr(w[metric], past, years)
 
-    # Dilución: crecimiento del número de acciones. Negativo significa recompra.
-    # Se prefiere la media diluida ponderada del TTM porque incluye el efecto de
-    # opciones y convertibles, que es donde de verdad se diluye al accionista.
-    if "shares_diluted_ttm" in w.columns:
-        shares = _safe_div(col("shares_diluted_ttm"), 4.0)
-        shares = shares.fillna(col("shares_outstanding"))
-    else:
-        shares = col("shares_outstanding")
+    # Dilución y capitalización: la fuente fiable es el saldo de acciones
+    # en circulación. La media diluida ponderada (flujo) se usa solo como
+    # respaldo, porque muchos 20-F la declaran en miles y el TTM anual no
+    # debe dividirse entre 4 (ya es un promedio del año, no la suma de
+    # cuatro trimestres). Preferir diluidas/4 sin sanitizar produjo
+    # capitalizaciones de unos pocos millones en empresas de miles de
+    # millones (p. ej. NVMI).
+    outstanding = col("shares_outstanding")
+    diluted_ttm = col("shares_diluted_ttm")
+    shares = outstanding
+    if diluted_ttm.notna().any():
+        shares = shares.fillna(_diluted_share_average(outstanding, diluted_ttm))
     w["share_count"] = shares
     w["dilution_1y"] = _pct_change(shares, _lag(w, "share_count", 4))
     w["dilution_3y"] = _pct_change(shares, _lag(w, "share_count", 12))
@@ -336,6 +340,33 @@ def _add_derived(wide: pd.DataFrame) -> pd.DataFrame:
     w["capex_intensity"] = _safe_div(capex, revenue)
 
     return w
+
+
+def _diluted_share_average(outstanding: pd.Series, diluted_ttm: pd.Series) -> pd.Series:
+    """Convierte `shares_diluted_ttm` en un nivel comparable a outstanding.
+
+    - Si el anual diluido está ~1000× por debajo del outstanding, viene en miles.
+    - Si tras escalar sigue ~4× el outstanding, el TTM era suma de trimestres → /4.
+    - Si ya está cerca del outstanding, es un promedio anual: no dividir.
+    """
+    scaled = diluted_ttm.copy()
+    with_both = outstanding.notna() & diluted_ttm.notna() & (diluted_ttm > 0)
+    ratio = outstanding / diluted_ttm.replace(0, np.nan)
+    thousands = with_both & ratio.between(400, 2500)
+    scaled = scaled.mask(thousands, diluted_ttm * 1000.0)
+
+    # Sin outstanding: asumir el caso común de TTM = suma de 4 medias trimestrales.
+    avg = scaled / 4.0
+    if outstanding.notna().any():
+        ratio_scaled = outstanding / scaled.replace(0, np.nan)
+        # scaled ya es promedio anual ≈ outstanding → usar scaled
+        annual_avg = outstanding.notna() & scaled.notna() & ratio_scaled.between(0.5, 2.0)
+        avg = avg.mask(annual_avg, scaled)
+        # scaled ≈ 4× outstanding → suma trimestral, mantener /4 (ya en avg)
+        # scaled todavía << outstanding tras *1000: mejor no inventar
+        still_tiny = outstanding.notna() & avg.notna() & ((outstanding / avg) > 50)
+        avg = avg.mask(still_tiny, np.nan)
+    return avg
 
 
 def _consecutive_streak(frame: pd.DataFrame, flags: pd.Series) -> pd.Series:
