@@ -144,6 +144,7 @@ class Settings:
     sec_user_agent: str
     polygon_api_key: str
     anthropic_api_key: str
+    fred_api_key: str
 
     @property
     def has_prices(self) -> bool:
@@ -153,12 +154,17 @@ class Settings:
     def has_llm(self) -> bool:
         return bool(self.anthropic_api_key)
 
+    @property
+    def has_macro(self) -> bool:
+        return bool(self.fred_api_key)
+
 
 def load_settings() -> Settings:
     return Settings(
         sec_user_agent=os.getenv("SEC_USER_AGENT", "").strip(),
         polygon_api_key=os.getenv("POLYGON_API_KEY", "").strip(),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip(),
+        fred_api_key=os.getenv("FRED_API_KEY", "").strip(),
     )
 
 

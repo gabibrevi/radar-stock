@@ -17,22 +17,23 @@ from .engines.e03_valuation import ValuationEngine
 from .engines.e04_management import ManagementEngine
 from .engines.e08_institutional import InstitutionalEngine
 from .engines.e10_technical import TechnicalEngine
+from .engines.e12_risk import RiskEngine
+from .engines.e13_macro import MacroEngine
 from .engines.e14_fundamental_momentum import FundamentalMomentumEngine
 from .engines.e16_asymmetry import AsymmetryEngine, compute_conviction
+from .features.macro import enrich_with_macro, fetch_macro_snapshot
 from .features.ownership import institutional_metrics, insider_metrics
 from .features.panel import build_panel
 from .features.technical import compute_technicals
 from .features.valuation import add_sector_medians, compute_valuation
 from .ingest.prices import average_volume, benchmark_series, latest_prices
 from .ingest.universe import investable_universe
+from .providers.fred import FredClient
 from .scoring.aggregate import aggregate, calibration_report, to_snapshot_tables
 from .store import append, upsert
 
 console = Console()
 
-# Los motores implementados. Los nueve restantes de la especificación necesitan
-# datos cualitativos o alternativos y se irán incorporando; mientras no existan,
-# su peso se redistribuye automáticamente entre estos.
 ENGINES = (
     QualityEngine(),
     FinancialHealthEngine(),
@@ -40,6 +41,8 @@ ENGINES = (
     ValuationEngine(),
     ManagementEngine(),
     InstitutionalEngine(),
+    RiskEngine(),
+    MacroEngine(),
     TechnicalEngine(),
 )
 
@@ -49,8 +52,6 @@ PENDING_ENGINES = (
     "e07_catalysts",
     "e09_sentiment",
     "e11_historical_analogs",
-    "e12_risk",
-    "e13_macro",
     "e15_predictive_ai",
 )
 
@@ -172,6 +173,26 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.Series(np.nan, index=frame.index, dtype="float64")
 
 
+def enrich_snapshot_with_macro(snapshot, settings, as_of: dt.date):
+    """Añade régimen FRED si hay clave. Sin ella el motor 13 queda sin puntuar."""
+    if not settings.has_macro:
+        console.print(
+            "[dim]Sin FRED_API_KEY: el motor 13 (macro) queda desactivado. "
+            "Clave gratuita en https://fred.stlouisfed.org/docs/api/api_key.html[/dim]"
+        )
+        return snapshot
+    try:
+        client = FredClient(settings.fred_api_key)
+        macro = fetch_macro_snapshot(client, as_of=as_of)
+        regime = macro.get("macro_regime")
+        if regime == regime:
+            console.print(f"Régimen macro FRED: [bold]{regime:.0f}[/bold]/100")
+        return enrich_with_macro(snapshot, macro)
+    except Exception as exc:  # noqa: BLE001 — no debe tumbar la puntuación entera
+        console.print(f"[yellow]FRED no disponible ({exc}); motor 13 omitido.[/yellow]")
+        return snapshot
+
+
 def score(
     con: duckdb.DuckDBPyConnection,
     as_of: dt.date | None = None,
@@ -189,6 +210,7 @@ def score(
 
     snapshot, has_prices = enrich_with_prices(con, snapshot)
     snapshot = enrich_with_ownership(con, snapshot, as_of)
+    snapshot = enrich_snapshot_with_macro(snapshot, settings, as_of)
     ctx = ScoringContext(
         snapshot=snapshot,
         groups=snapshot["sector"].fillna("Sin clasificar"),

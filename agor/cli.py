@@ -41,6 +41,9 @@ def cmd_estado(args) -> int:
         f"  POLYGON_API_KEY  {'OK' if settings.has_prices else 'ausente → sin motores 3, 10 y 16'}"
     )
     console.print(
+        f"  FRED_API_KEY     {'OK' if settings.has_macro else 'ausente → sin motor 13 (macro)'}"
+    )
+    console.print(
         f"  ANTHROPIC_API_KEY {'OK' if settings.has_llm else 'ausente → motores cualitativos desactivados'}"
     )
 
