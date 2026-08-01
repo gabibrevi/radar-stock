@@ -134,6 +134,47 @@ class SecClient:
             return None
         return self.http.download(url, dest)
 
+    def daily_form4_accessions(self, day: dt.date) -> list[tuple[str, str]]:
+        """Formularios 4 presentados un día concreto: (accession, ruta del documento).
+
+        Se usa `master.idx` y no `form.idx` porque el primero viene delimitado por
+        barras verticales y el segundo por posiciones fijas de columna, que cambian
+        cuando un nombre de empresa es largo.
+
+        El índice lista cada presentación una vez por cada CIK implicado, así que un
+        formulario 4 aparece tanto bajo el emisor como bajo el directivo. Se
+        deduplica por número de expediente para no descargar dos veces lo mismo.
+        """
+        quarter = (day.month - 1) // 3 + 1
+        url = (
+            f"{SEC_BASE}/Archives/edgar/daily-index/{day.year}/QTR{quarter}/"
+            f"master.{day:%Y%m%d}.idx"
+        )
+        self.http.limiter.acquire()
+        response = self.http.session.get(url, timeout=self.http.timeout)
+        if response.status_code != 200:
+            # Fin de semana, festivo o día aún no publicado.
+            return []
+
+        seen: dict[str, str] = {}
+        for line in response.text.splitlines():
+            parts = line.split("|")
+            if len(parts) != 5 or parts[2].strip() not in ("4", "4/A"):
+                continue
+            path = parts[4].strip()
+            accession = path.rsplit("/", 1)[-1].removesuffix(".txt")
+            seen.setdefault(accession, path)
+        return sorted(seen.items())
+
+    def filing_text(self, path: str) -> str:
+        """Documento completo de una presentación.
+
+        Se descarga el fichero de texto agregado en lugar de localizar el XML: el XML
+        va incrustado dentro, y así se resuelve con una sola petición en vez de dos
+        (una para el índice del expediente y otra para el documento).
+        """
+        return self.http._request(f"{SEC_BASE}/Archives/{path.lstrip('/')}").text
+
     # ------------------------------------------------------------------
     # 13F
     # ------------------------------------------------------------------

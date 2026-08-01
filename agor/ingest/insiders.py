@@ -150,11 +150,16 @@ def ingest_quarter(
         if rows == 0:
             return 0
 
+        # Se borra por expediente completo y no por operación individual. Los mismos
+        # formularios pueden haber entrado antes por la vía diaria de `form4.py`, que
+        # los lee del índice de EDGAR con claves propias para cubrir el hueco hasta
+        # que la SEC publica el trimestre. Borrando por expediente, esta carga —que es
+        # la autoritativa y trae las validaciones de la SEC— sustituye limpiamente a
+        # aquella en lugar de convivir con ella duplicando operaciones.
         con.execute(
             """
             DELETE FROM insider_transactions t
-            WHERE EXISTS (SELECT 1 FROM ins_stage s
-                          WHERE s.accn = t.accn AND s.trans_sk = t.trans_sk)
+            WHERE t.accn IN (SELECT DISTINCT accn FROM ins_stage)
             """
         )
         con.execute(

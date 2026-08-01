@@ -17,6 +17,7 @@ from .config import ENGINE_NAMES_ES, SPEC_WEIGHTS, ensure_dirs, load_settings
 from .ingest.fundamentals import backfill as backfill_fundamentals
 from .ingest.holdings import backfill as backfill_holdings
 from .ingest.holdings import refresh_cusip_map
+from .ingest.form4 import topup as topup_form4
 from .ingest.insiders import backfill as backfill_insiders
 from .ingest.prices import backfill_prices
 from .ingest.universe import refresh_universe, universe_report
@@ -49,9 +50,11 @@ def cmd_estado(args) -> int:
         console.print("\n[bold]Frescura de cada fuente[/bold]")
         console.print(freshness(con).to_string(index=False))
         console.print(
-            "[dim]Los datasets de insiders y de 13F se publican por trimestres: "
-            "pueden ir varios meses por detrás. Los motores 4 y 8 describen el último "
-            "trimestre publicado, no el día de hoy.[/dim]"
+            "[dim]Las operaciones de directivos se mantienen al día leyendo los "
+            "formularios 4 del índice diario de EDGAR, aunque el dataset trimestral "
+            "vaya por detrás. Los 13F no tienen equivalente diario: son trimestrales "
+            "por ley, así que el motor 8 describe el último trimestre cerrado y no la "
+            "sesión de hoy.[/dim]"
         )
         try:
             console.print("\n[bold]Universo por bolsa[/bold]")
@@ -116,6 +119,14 @@ def cmd_propiedad(args) -> int:
         console.print("[bold]Operaciones de directivos[/bold] (unos 8 MB por trimestre)")
         rows = backfill_insiders(con, client, quarters=args.trimestres_insiders)
         console.print(f"  operaciones cargadas: {rows:,}")
+
+        console.print(
+            "\n[bold]Formularios 4 del día[/bold]\n"
+            "[dim]El dataset trimestral puede ir cuatro meses por detrás. Esto cubre el "
+            "hueco leyendo el índice diario de EDGAR, unos 45 segundos por sesión.[/dim]"
+        )
+        rows = topup_form4(con, client, max_days=args.dias_form4)
+        console.print(f"  operaciones al día: {rows:,}")
 
         console.print(
             "\n[bold]Puente CUSIP → ticker[/bold]\n"
@@ -201,6 +212,7 @@ def cmd_todo(args) -> int:
         # El universo tiene que existir antes que los 13F: el mapeo de posiciones
         # pasa por el ticker, y sin universo no habría nada con lo que emparejar.
         backfill_insiders(con, client, quarters=8)
+        topup_form4(con, client, max_days=args.dias_form4)
         refresh_cusip_map(con, client, months=6)
         backfill_holdings(con, client, files=4)
 
@@ -247,6 +259,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--trimestres-insiders", type=int, default=8, dest="trimestres_insiders")
     p.add_argument("--trimestres-13f", type=int, default=4, dest="trimestres_13f")
     p.add_argument("--meses-cusip", type=int, default=6, dest="meses_cusip")
+    # Sesiones de formularios 4 por ejecución. Con 5 al día se recupera un hueco de
+    # cuatro meses en unas tres semanas y después basta 1 para ir al día; el límite
+    # existe para que ninguna ejecución de CI se dispare.
+    p.add_argument("--dias-form4", type=int, default=5, dest="dias_form4")
     p.set_defaults(func=cmd_propiedad)
 
     p = sub.add_parser("precios", help="Descarga cotizaciones desde Polygon")
@@ -261,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("todo", help="Ingesta completa y puntuación")
     p.add_argument("--desde", type=int, default=2015)
     p.add_argument("--conservar-zips", action="store_true", dest="conservar_zips")
+    p.add_argument("--dias-form4", type=int, default=5, dest="dias_form4")
     p.add_argument("--max-dias-precios", type=int, default=None, dest="max_dias_precios")
     p.set_defaults(func=cmd_todo)
 

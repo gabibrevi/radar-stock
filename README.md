@@ -75,12 +75,14 @@ Tres advertencias que no se resuelven con esfuerzo:
   exclusivamente estadounidense, trimestral y con 45 días de retraso legal. Los
   *dark pools* que pedía la especificación no son datos públicos: lo único oficial
   es un fichero semanal agregado de FINRA.
-- Los **motores 4 y 8 van con retraso estructural**. Ambos se calculan sobre
-  datasets que la SEC publica por trimestres, así que describen el último trimestre
-  publicado y no la sesión de hoy: entre uno y cuatro meses atrás según el momento
-  del año. El radar lo muestra siempre, en `radar estado` y en el propio dashboard,
-  porque leer un motor institucional alto como "los fondos están entrando ahora"
-  sería un error de interpretación con consecuencias.
+- El **motor 8 va con retraso estructural** y no hay forma de evitarlo: los 13F se
+  publican por trimestres y con 45 días de plazo legal, así que describe el último
+  trimestre cerrado y no la sesión de hoy. El radar lo muestra siempre, en `radar
+  estado` y en el propio dashboard, porque leer un motor institucional alto como
+  "los fondos están entrando ahora" sería un error de interpretación con
+  consecuencias. El **motor 4 sí se mantiene al día**: el dataset trimestral de
+  insiders llega igual de tarde, pero el hueco hasta hoy se cubre leyendo los
+  formularios 4 del índice diario de EDGAR uno a uno.
 - El **motor 9** dependía de X/Twitter, Google Trends y Seeking Alpha. La API de X
   cuesta hoy cientos de dólares al mes por un volumen mínimo, Google Trends solo
   es accesible por librerías no oficiales que se bloquean, y Seeking Alpha no
@@ -183,9 +185,18 @@ un fichero por trimestre con todos los hechos numéricos de todas las empresas.
 Solo se hace una vez; después, cada ejecución descarga únicamente el trimestre
 nuevo cuando la SEC lo publica.
 
-El paso de propiedad alimenta los motores 4 y 8. Descarga tres cosas: las
-operaciones declaradas por directivos (unos 8 MB por trimestre), las posiciones
-declaradas en los 13F (unos 80 MB por trimestre) y un puente CUSIP → ticker.
+El paso de propiedad alimenta los motores 4 y 8. Descarga cuatro cosas: las
+operaciones declaradas por directivos (unos 8 MB por trimestre), los formularios 4
+de los días que el dataset trimestral aún no cubre, las posiciones declaradas en los
+13F (unos 80 MB por trimestre) y un puente CUSIP → ticker.
+
+Los formularios 4 del día se leen de uno en uno porque no hay otra forma: son unas
+877 presentaciones por sesión, unos dos minutos al ritmo autoimpuesto de 8 peticiones
+por segundo. Cada ejecución procesa cinco sesiones como máximo y retoma donde lo
+dejó, así que un hueco de cuatro meses se recupera en unas tres semanas de
+ejecuciones diarias y después basta con ir al día. Cuando la SEC publica el trimestre
+correspondiente, esas filas quedan sustituidas por las oficiales, que traen
+validaciones que este parseo no hace.
 
 Ese puente merece una explicación, porque es el único punto del radar donde hubo que
 buscar un camino lateral. Los 13F identifican cada posición por CUSIP, y las tablas
