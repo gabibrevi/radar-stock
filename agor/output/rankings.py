@@ -21,6 +21,11 @@ import pandas as pd
 
 TOP_N = 20
 
+# Se publican las puntuaciones de los ocho motores, no solo las de algunos. El
+# diseño entero del radar se apoya en poder responder "¿por qué esta empresa saca
+# 91?" sin adivinar, y esa respuesta es el desglose por motor. Publicar la nota final
+# sin sus componentes convierte el radar en una caja negra, que es justo lo que no
+# debe ser.
 DISPLAY_COLUMNS = [
     "ticker",
     "name",
@@ -28,6 +33,7 @@ DISPLAY_COLUMNS = [
     "total",
     "band",
     "coverage",
+    "conviction",
     "market_cap",
     "revenue_ttm_cagr_3y",
     "gross_margin",
@@ -35,10 +41,20 @@ DISPLAY_COLUMNS = [
     "roic",
     "net_cash",
     "score_e01_quality",
-    "score_e14_fundamental_momentum",
+    "score_e02_financial_health",
     "score_e03_valuation",
+    "score_e04_management",
+    "score_e08_institutional",
     "score_e10_technical",
+    "score_e14_fundamental_momentum",
     "score_e16_asymmetry",
+    # Contexto de los motores de propiedad: sin estas cifras, un 90 en institucional
+    # no dice si entraron veinte gestoras o si ya estaban todas dentro.
+    "ins_net_buyers_90d",
+    "ins_ownership_pct",
+    "inst_holders",
+    "inst_holders_change_pct",
+    "inst_ownership_pct",
 ]
 
 

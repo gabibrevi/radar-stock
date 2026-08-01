@@ -18,7 +18,7 @@ import duckdb
 import pandas as pd
 from rich.console import Console
 
-from ..config import POLYGON_FREE_TIER_YEARS
+from ..config import BENCHMARK_TICKER, POLYGON_FREE_TIER_YEARS
 from ..providers.polygon import PolygonClient
 from ..store import get_watermark, set_watermark, upsert
 
@@ -54,6 +54,8 @@ def backfill_prices(
     if max_days is not None:
         candidates = candidates[:max_days]
 
+    keep = _tickers_to_keep(con)
+
     total = 0
     for day in candidates:
         frame = client.grouped_daily(day)
@@ -65,10 +67,40 @@ def backfill_prices(
         # no corresponden a acciones ordinarias comparables.
         frame = frame[~frame["ticker"].str.contains(r"[.\-]W$|[.\-]U$|[.\-]R$", regex=True)]
         frame = _resolve_ticker_collisions(frame)
+        frame = frame[frame["ticker"].isin(keep)]
         total += upsert(con, "prices", frame, ["ticker", "date"])
         console.print(f"  [green]{day}[/green]: {len(frame):,} tickers")
 
     return total
+
+
+def _tickers_to_keep(con: duckdb.DuckDBPyConnection) -> set[str]:
+    """Símbolos que merece la pena almacenar de cada sesión de Polygon.
+
+    La descarga no se puede acotar: `grouped_daily` devuelve el mercado entero en
+    una sola petición, así que pedir veinte tickers cuesta lo mismo que pedir doce
+    mil. Lo que sí se puede acotar es lo que se guarda y lo que después hay que
+    recorrer para calcular medias móviles, y ahí sobra más de la mitad: Polygon
+    incluye ETFs, fondos cerrados, warrants, preferentes y vehículos que no
+    presentan cuentas a la SEC y que por tanto el radar nunca podrá puntuar.
+
+    Se filtra contra `universe` y deliberadamente NO contra `investable_universe`.
+    Este último aplica los filtros de sector y capitalización vigentes hoy, y
+    purgar con ese criterio dejaría sin historial a una empresa que hoy no los pasa
+    pero los pase dentro de seis meses: llegaría al radar sin media de 200 sesiones
+    ni fuerza relativa justo cuando empieza a interesar, y recuperar ese pasado
+    exigiría rehacer la descarga entera. El universo amplio elimina lo que nunca
+    se va a puntuar sin abrir huecos futuros.
+
+    El benchmark se añade a mano porque es la excepción que rompe la regla: SPY es
+    un ETF y no está en `universe`, de modo que el filtro lo borraría y
+    `benchmark_series()` devolvería una serie vacía. El motor técnico no fallaría,
+    simplemente se quedaría sin comparador de fuerza relativa y nadie se enteraría.
+    """
+    tickers = con.execute(
+        "SELECT DISTINCT ticker FROM universe WHERE ticker IS NOT NULL"
+    ).fetchdf()["ticker"]
+    return set(tickers) | {BENCHMARK_TICKER}
 
 
 def _resolve_ticker_collisions(frame: pd.DataFrame) -> pd.DataFrame:
@@ -101,6 +133,33 @@ def _resolve_ticker_collisions(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def purge_out_of_universe(con: duckdb.DuckDBPyConnection) -> tuple[int, int]:
+    """Borra de `prices` lo que la ingesta filtrada ya no volvería a guardar.
+
+    Necesaria porque el filtro se añadió con la tabla a medio llenar y solo actúa
+    sobre lo que entra. Devuelve (filas, tickers) eliminados.
+
+    No se ejecuta automáticamente en cada descarga: si un refresco del universo
+    fallara o EDGAR omitiera temporalmente una empresa, una purga automática
+    borraría años de cotizaciones que costaría horas recuperar. Se invoca a mano
+    con `radar precios --purgar`.
+    """
+    keep = _tickers_to_keep(con)
+    con.execute("CREATE OR REPLACE TEMP TABLE _keep (ticker VARCHAR)")
+    con.executemany("INSERT INTO _keep VALUES (?)", [(t,) for t in sorted(keep)])
+
+    rows, tickers = con.execute(
+        """
+        SELECT count(*), count(DISTINCT ticker) FROM prices
+        WHERE ticker NOT IN (SELECT ticker FROM _keep)
+        """
+    ).fetchone()
+    if rows:
+        con.execute("DELETE FROM prices WHERE ticker NOT IN (SELECT ticker FROM _keep)")
+    con.execute("DROP TABLE _keep")
+    return int(rows), int(tickers)
+
+
 def latest_prices(con: duckdb.DuckDBPyConnection, lookback_days: int = 420) -> pd.DataFrame:
     """Ventana de precios suficiente para las medias de 200 sesiones."""
     return con.execute(
@@ -113,7 +172,9 @@ def latest_prices(con: duckdb.DuckDBPyConnection, lookback_days: int = 420) -> p
     ).fetchdf()
 
 
-def benchmark_series(con: duckdb.DuckDBPyConnection, ticker: str = "SPY") -> pd.Series:
+def benchmark_series(
+    con: duckdb.DuckDBPyConnection, ticker: str = BENCHMARK_TICKER
+) -> pd.Series:
     """Serie del índice de referencia para calcular fuerza relativa."""
     frame = con.execute(
         "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date", [ticker]

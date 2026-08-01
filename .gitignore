@@ -17,6 +17,9 @@ data/cache/
 # que no esté ya en data/history/.
 reports/
 
+# Salida de las descargas largas lanzadas en segundo plano.
+logs/
+
 # Lo que SÍ se versiona, y hay que tener cuidado de no excluir nunca:
 #   data/history/  → histórico de puntuaciones. Es la memoria del radar y la base
 #                    del módulo de aprendizaje. No se puede reconstruir: si se

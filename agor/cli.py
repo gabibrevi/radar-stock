@@ -19,7 +19,7 @@ from .ingest.holdings import backfill as backfill_holdings
 from .ingest.holdings import refresh_cusip_map
 from .ingest.form4 import topup as topup_form4
 from .ingest.insiders import backfill as backfill_insiders
-from .ingest.prices import backfill_prices
+from .ingest.prices import backfill_prices, purge_out_of_universe
 from .ingest.universe import refresh_universe, universe_report
 from .output import alerts as alerts_module
 from .output.export import write_history, write_reports, write_web_data
@@ -157,6 +157,11 @@ def cmd_precios(args) -> int:
         return 1
     client = PolygonClient(settings.polygon_api_key)
     with db() as con:
+        if args.purgar:
+            rows, tickers = purge_out_of_universe(con)
+            console.print(
+                f"Purga: {rows:,} filas de {tickers:,} tickers fuera del universo"
+            )
         console.print(
             "El plan gratuito permite 5 peticiones por minuto. Cada petición trae "
             "un día completo de mercado."
@@ -268,6 +273,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("precios", help="Descarga cotizaciones desde Polygon")
     p.add_argument("--anios", type=int, default=2)
     p.add_argument("--max-dias", type=int, default=None, dest="max_dias")
+    # Solo hace falta tras cambiar el criterio de filtrado: borra el histórico ya
+    # guardado de tickers que la ingesta actual ya no aceptaría.
+    p.add_argument("--purgar", action="store_true")
     p.set_defaults(func=cmd_precios)
 
     p = sub.add_parser("puntuar", help="Ejecuta los motores y genera los rankings")

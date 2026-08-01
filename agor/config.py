@@ -170,6 +170,15 @@ SEC_REQUESTS_PER_SECOND = 8.0
 POLYGON_REQUESTS_PER_MINUTE = 5.0
 POLYGON_FREE_TIER_YEARS = 2
 
+# Índice de referencia para la fuerza relativa del motor técnico.
+#
+# Vive aquí y no como valor por defecto disperso porque la ingesta de precios
+# descarta todo lo que no esté en el universo, y SPY es un ETF: no está en
+# `universe` y sin esta constante el filtro lo borraría, dejando la fuerza
+# relativa sin comparador y en silencio. Cambiar el benchmark exige tocar solo
+# esta línea; la ingesta lo preservará automáticamente.
+BENCHMARK_TICKER = "SPY"
+
 
 def ensure_dirs() -> None:
     for d in (DATA_DIR, CACHE_DIR, REPORTS_DIR, WEB_DATA_DIR):
