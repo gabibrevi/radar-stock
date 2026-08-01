@@ -91,6 +91,40 @@ class HttpClient:
             cache_path.write_bytes(response.content)
         return response.json()
 
+    @retry(
+        retry=retry_if_exception_type(
+            (RetryableHTTPError, requests.ConnectionError, requests.Timeout)
+        ),
+        wait=wait_exponential(multiplier=2, min=2, max=60),
+        stop=stop_after_attempt(5),
+        reraise=True,
+    )
+    def post_json(
+        self,
+        url: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        cache_hours: float = 0.0,
+    ):
+        """POST JSON. La caché en disco solo se usa si cache_hours > 0."""
+        import json
+
+        cache_path = self._cache_path(url, {**(params or {}), "_body": repr(json_body)}, ".json")
+        if cache_hours and self._is_fresh(cache_path, cache_hours):
+            return json.loads(cache_path.read_text())
+
+        self.limiter.acquire()
+        response = self.session.post(
+            url, params=params, json=json_body, timeout=self.timeout
+        )
+        if response.status_code == 429 or response.status_code >= 500:
+            raise RetryableHTTPError(f"{response.status_code} en {url}", response=response)
+        response.raise_for_status()
+        if cache_hours:
+            cache_path.write_bytes(response.content)
+        return response.json()
+
     def download(self, url: str, dest: Path, skip_if_exists: bool = True) -> Path:
         """Descarga en streaming. Usado para los ZIP de decenas de megas."""
         if skip_if_exists and dest.exists() and dest.stat().st_size > 0:

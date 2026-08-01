@@ -135,6 +135,10 @@ MIN_QUARTERS_OF_HISTORY = 8
 MIN_WEIGHT_APPLIED = 0.50
 MIN_OVERALL_COVERAGE = 0.30
 
+# Piloto del motor 5 (moat) con Gemini free: solo Top N candidatas/día.
+# Sobreescribible con LLM_MOAT_TOP_N en el entorno (p. ej. pruebas con 5).
+LLM_MOAT_TOP_N = int(os.getenv("LLM_MOAT_TOP_N", "100") or "100")
+
 
 # --------------------------------------------------------------------------
 # Credenciales y límites de red
@@ -144,6 +148,8 @@ class Settings:
     sec_user_agent: str
     polygon_api_key: str
     anthropic_api_key: str
+    gemini_api_key: str
+    gemini_model: str
     fred_api_key: str
 
     @property
@@ -151,8 +157,13 @@ class Settings:
         return bool(self.polygon_api_key)
 
     @property
+    def has_gemini(self) -> bool:
+        return bool(self.gemini_api_key)
+
+    @property
     def has_llm(self) -> bool:
-        return bool(self.anthropic_api_key)
+        # Gemini es el proveedor gratuito del piloto; Anthropic queda por si se reactiva.
+        return bool(self.gemini_api_key or self.anthropic_api_key)
 
     @property
     def has_macro(self) -> bool:
@@ -164,6 +175,12 @@ def load_settings() -> Settings:
         sec_user_agent=os.getenv("SEC_USER_AGENT", "").strip(),
         polygon_api_key=os.getenv("POLYGON_API_KEY", "").strip(),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip(),
+        gemini_api_key=(
+            os.getenv("GEMINI_API_KEY", "").strip()
+            or os.getenv("GOOGLE_API_KEY", "").strip()
+        ),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip()
+        or "gemini-flash-lite-latest",
         fred_api_key=os.getenv("FRED_API_KEY", "").strip(),
     )
 

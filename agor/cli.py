@@ -44,8 +44,10 @@ def cmd_estado(args) -> int:
         f"  FRED_API_KEY     {'OK' if settings.has_macro else 'ausente → sin motor 13 (macro)'}"
     )
     console.print(
-        f"  ANTHROPIC_API_KEY {'OK' if settings.has_llm else 'ausente → motores cualitativos desactivados'}"
+        f"  GEMINI_API_KEY   {'OK' if settings.has_gemini else 'ausente → sin motor 5 (moat LLM)'}"
     )
+    if settings.anthropic_api_key:
+        console.print("  ANTHROPIC_API_KEY OK (opcional; el piloto usa Gemini)")
 
     with db() as con:
         console.print("\n[bold]Contenido de la base de datos[/bold]")

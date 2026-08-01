@@ -207,6 +207,21 @@ CREATE TABLE IF NOT EXISTS watermarks (
     value      VARCHAR,
     updated_at TIMESTAMP
 );
+
+-- Scores cualitativos de moat (Gemini u otro LLM). Clave por modelo para poder
+-- re-puntuar si cambia el prompt/modelo sin pisar el histórico.
+CREATE TABLE IF NOT EXISTS llm_moat (
+    cik              BIGINT,
+    as_of            DATE,
+    model            VARCHAR,
+    moat_score       DOUBLE,
+    moat_durability  DOUBLE,
+    moat_confidence  DOUBLE,
+    moat_type        VARCHAR,
+    rationale        VARCHAR,
+    raw_json         VARCHAR,
+    PRIMARY KEY (cik, as_of, model)
+);
 """
 
 

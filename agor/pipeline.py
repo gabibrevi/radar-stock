@@ -15,6 +15,7 @@ from .engines.e01_quality import QualityEngine
 from .engines.e02_financial_health import FinancialHealthEngine
 from .engines.e03_valuation import ValuationEngine
 from .engines.e04_management import ManagementEngine
+from .engines.e05_moat import MoatEngine
 from .engines.e08_institutional import InstitutionalEngine
 from .engines.e10_technical import TechnicalEngine
 from .engines.e12_risk import RiskEngine
@@ -22,6 +23,7 @@ from .engines.e13_macro import MacroEngine
 from .engines.e14_fundamental_momentum import FundamentalMomentumEngine
 from .engines.e16_asymmetry import AsymmetryEngine, compute_conviction
 from .features.macro import enrich_with_macro, fetch_macro_snapshot
+from .features.moat import enrich_with_moat
 from .features.ownership import institutional_metrics, insider_metrics
 from .features.panel import build_panel
 from .features.technical import compute_technicals
@@ -40,6 +42,7 @@ ENGINES = (
     FundamentalMomentumEngine(),
     ValuationEngine(),
     ManagementEngine(),
+    MoatEngine(),
     InstitutionalEngine(),
     RiskEngine(),
     MacroEngine(),
@@ -47,7 +50,6 @@ ENGINES = (
 )
 
 PENDING_ENGINES = (
-    "e05_moat",
     "e06_megatrends",
     "e07_catalysts",
     "e09_sentiment",
@@ -211,6 +213,7 @@ def score(
     snapshot, has_prices = enrich_with_prices(con, snapshot)
     snapshot = enrich_with_ownership(con, snapshot, as_of)
     snapshot = enrich_snapshot_with_macro(snapshot, settings, as_of)
+    snapshot = enrich_with_moat(con, snapshot, settings, as_of)
     ctx = ScoringContext(
         snapshot=snapshot,
         groups=snapshot["sector"].fillna("Sin clasificar"),
