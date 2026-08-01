@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+
+# La base de datos y las descargas son artefactos reconstruibles: se pueden
+# regenerar en cualquier momento desde la SEC y desde Polygon, pesan cientos de
+# megas y cambiarían en cada ejecución. Viven en la caché de GitHub Actions, no
+# en el repositorio.
+data/agor.duckdb
+data/agor.duckdb.wal
+data/cache/
+
+# Los CSV diarios se regeneran en cada ejecución a partir del histórico. Si se
+# versionasen, el repositorio crecería unos megas al día sin aportar información
+# que no esté ya en data/history/.
+reports/
+
+# Lo que SÍ se versiona, y hay que tener cuidado de no excluir nunca:
+#   data/history/  → histórico de puntuaciones. Es la memoria del radar y la base
+#                    del módulo de aprendizaje. No se puede reconstruir: si se
+#                    pierde, se pierden los meses de decisiones ya registradas.
+#   web/data/      → JSON que alimenta el dashboard publicado.
+!data/history/
+!web/data/

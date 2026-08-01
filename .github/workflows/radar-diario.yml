@@ -1,0 +1,104 @@
+name: Radar diario
+
+# Se ejecuta de lunes a sábado a las 07:00 UTC, después del cierre del mercado
+# estadounidense del día anterior y de que Polygon consolide la sesión.
+on:
+  schedule:
+    - cron: "0 7 * * 1-6"
+  workflow_dispatch:
+    inputs:
+      desde_anio:
+        description: "Año inicial de fundamentales (solo la primera vez)"
+        required: false
+        default: "2015"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: radar
+  cancel-in-progress: false
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # La base de datos es un artefacto reconstruible y pesa cientos de megas,
+      # así que vive en la caché de Actions y no en el repositorio. Lo que sí se
+      # versiona es el histórico de puntuaciones, que es irreemplazable.
+      - name: Recuperar base de datos de la caché
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/agor.duckdb
+            data/cache
+          key: agor-db-${{ github.run_id }}
+          restore-keys: |
+            agor-db-
+
+      - name: Fundamentales de la SEC
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -m agor.cli fundamentales --desde ${{ github.event.inputs.desde_anio || '2015' }}
+
+      - name: Universo
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -m agor.cli universo
+
+      # El plan gratuito de Polygon da 5 peticiones por minuto. Se limita a 240
+      # sesiones por ejecución (unos 50 minutos) para que el histórico se complete
+      # a lo largo de varios días sin que ningún día se dispare el tiempo de CI.
+      - name: Precios
+        if: env.POLYGON_API_KEY != ''
+        env:
+          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -m agor.cli precios --max-dias 240
+
+      - name: Puntuar y generar rankings
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m agor.cli puntuar
+
+      - name: Guardar base de datos en la caché
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            data/agor.duckdb
+            data/cache
+          key: agor-db-${{ github.run_id }}
+
+      - name: Versionar histórico y salida web
+        run: |
+          git config user.name  "radar-bot"
+          git config user.email "radar-bot@users.noreply.github.com"
+          git add -f data/history web/data || true
+          if git diff --staged --quiet; then
+            echo "Sin cambios que registrar."
+          else
+            git commit -m "Radar $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - uses: actions/deploy-pages@v4

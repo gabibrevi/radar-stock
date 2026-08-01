@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGOR · Radar de oportunidades</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #131722;
+    --panel-2: #1a1f2e;
+    --border: #242b3d;
+    --text: #e4e8f1;
+    --muted: #8b93a7;
+    --accent: #4d9fff;
+    --green: #26a86b;
+    --amber: #d99a2b;
+    --red: #d9534f;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  }
+  header {
+    padding: 28px 32px 20px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #121722, var(--bg));
+  }
+  h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13.5px; }
+  .wrap { max-width: 1380px; margin: 0 auto; padding: 0 32px 64px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 24px 0; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px;
+  }
+  .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .card .v { font-size: 26px; font-weight: 600; margin-top: 4px; }
+  nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 24px 0 18px; }
+  nav button {
+    background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 7px 15px; font-size: 13.5px; cursor: pointer;
+    transition: .12s;
+  }
+  nav button:hover { color: var(--text); border-color: #33405c; }
+  nav button.on { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
+  .desc {
+    background: var(--panel-2); border-left: 3px solid var(--accent);
+    padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0;
+    color: var(--muted); font-size: 13.5px; margin-bottom: 14px;
+  }
+  .tablebox { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { padding: 10px 13px; text-align: right; white-space: nowrap; }
+  th {
+    background: var(--panel-2); color: var(--muted); font-weight: 600;
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
+    position: sticky; top: 0;
+  }
+  td:nth-child(1), td:nth-child(2), td:nth-child(3),
+  th:nth-child(1), th:nth-child(2), th:nth-child(3) { text-align: left; }
+  tbody tr { border-top: 1px solid var(--border); }
+  tbody tr:hover { background: #171d2b; }
+  .tick { font-weight: 600; color: var(--accent); }
+  .badge {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600;
+  }
+  .b-exceptional { background: rgba(38,168,107,.18); color: #4ed693; }
+  .b-strong { background: rgba(38,168,107,.12); color: #3fbd80; }
+  .b-buy { background: rgba(77,159,255,.14); color: #6fb4ff; }
+  .b-watch { background: rgba(217,154,43,.14); color: #e0aa4a; }
+  .b-no { background: rgba(139,147,167,.12); color: var(--muted); }
+  .bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; min-width: 54px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  .empty { padding: 34px; text-align: center; color: var(--muted); font-size: 14px; }
+  footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; }
+  .warn { color: var(--amber); }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; font-size: 13px; margin-top: 10px; }
+  .kv span:nth-child(even) { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap" style="padding-bottom:0">
+    <h1>AGOR · AI Global Opportunity Radar</h1>
+    <div class="sub" id="stamp">Cargando…</div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="cards" id="cards"></div>
+  <nav id="tabs"></nav>
+  <div id="desc" class="desc"></div>
+  <div class="tablebox"><div id="table"></div></div>
+
+  <details>
+    <summary>Reparto de pesos usado en esta ejecución</summary>
+    <div class="kv" id="weights"></div>
+  </details>
+
+  <footer>
+    Puntuaciones generadas a partir de datos públicos de SEC EDGAR y precios de
+    Polygon.io. No es asesoramiento de inversión. La columna <b>Cob.</b> indica qué
+    fracción de los datos necesarios estaba realmente disponible: desconfía de
+    cualquier puntuación con cobertura baja.
+  </footer>
+</div>
+
+<script>
+const BANDS = {
+  "Exceptional Buy": "b-exceptional", "Strong Buy": "b-strong", "Buy": "b-buy",
+  "Watchlist Premium": "b-watch", "Watchlist": "b-watch", "No invertir": "b-no",
+};
+const COLS = [
+  ["ticker", "Ticker", v => `<span class="tick">${v ?? ""}</span>`],
+  ["name", "Empresa", v => trunc(v, 34)],
+  ["sector", "Sector", v => v ?? ""],
+  ["total", "Score", v => v == null ? "—" : `<b>${v.toFixed(1)}</b>`],
+  ["band", "Banda", v => v ? `<span class="badge ${BANDS[v] ?? "b-no"}">${v}</span>` : ""],
+  ["coverage", "Cob.", bar],
+  ["market_cap", "Capitaliz.", money],
+  ["revenue_ttm_cagr_3y", "Crec. 3a", pct],
+  ["gross_margin", "M. bruto", pct],
+  ["operating_margin", "M. oper.", pct],
+  ["roic", "ROIC", pct],
+  ["score_e01_quality", "Calidad", num],
+  ["score_e14_fundamental_momentum", "Momentum", num],
+  ["score_e03_valuation", "Valorac.", num],
+  ["score_e10_technical", "Técnico", num],
+  ["score_e16_asymmetry", "Asimetría", num],
+];
+
+function trunc(v, n) { if (!v) return ""; return v.length > n ? v.slice(0, n - 1) + "…" : v; }
+function num(v) { return v == null ? "—" : v.toFixed(0); }
+function pct(v) { return v == null ? "—" : (v * 100).toFixed(1) + "%"; }
+function bar(v) {
+  if (v == null) return "—";
+  const p = Math.round(v * 100);
+  return `<div class="bar" title="${p}%"><i style="width:${p}%"></i></div>`;
+}
+function money(v) {
+  if (v == null) return "—";
+  const u = [[1e12, "B"], [1e9, "MM"], [1e6, "M"]];
+  for (const [d, s] of u) if (v >= d) return "$" + (v / d).toFixed(1) + s;
+  return "$" + v.toFixed(0);
+}
+
+let DATA = null, current = 0;
+
+fetch("data/radar.json?" + Date.now())
+  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  .then(d => { DATA = d; render(); })
+  .catch(e => {
+    document.getElementById("stamp").innerHTML =
+      `<span class="warn">No se encuentra data/radar.json. Ejecuta primero <code>./radar puntuar</code>.</span>`;
+  });
+
+function render() {
+  document.getElementById("stamp").textContent =
+    `Generado el ${DATA.generado} · ${DATA.universo.toLocaleString("es")} empresas con puntuación final`;
+
+  const dist = Object.fromEntries((DATA.distribucion || []).map(x => [x.banda, x.empresas]));
+  document.getElementById("cards").innerHTML = [
+    ["Exceptional Buy", dist["Exceptional Buy"] || 0],
+    ["Strong Buy", dist["Strong Buy"] || 0],
+    ["Buy", dist["Buy"] || 0],
+    ["Watchlist", (dist["Watchlist"] || 0) + (dist["Watchlist Premium"] || 0)],
+    ["Alertas hoy", (DATA.alertas || []).length],
+  ].map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+
+  document.getElementById("tabs").innerHTML = DATA.rankings
+    .map((r, i) => `<button class="${i === current ? "on" : ""}" onclick="pick(${i})">${r.titulo.replace("Top 20 ", "")} <span style="opacity:.6">${r.filas.length}</span></button>`)
+    .join("") + `<button class="${current === -1 ? "on" : ""}" onclick="pick(-1)">Alertas <span style="opacity:.6">${(DATA.alertas || []).length}</span></button>`;
+
+  document.getElementById("weights").innerHTML = Object.entries(DATA.pesos || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<span>${k}</span><span>${v.toFixed(1)}%</span>`).join("");
+
+  paint();
+}
+
+function pick(i) { current = i; render(); }
+
+function paint() {
+  const descEl = document.getElementById("desc");
+  const tableEl = document.getElementById("table");
+
+  if (current === -1) {
+    descEl.textContent = "Alertas detectadas en esta ejecución.";
+    const rows = DATA.alertas || [];
+    if (!rows.length) { tableEl.innerHTML = `<div class="empty">Ninguna alerta hoy.</div>`; return; }
+    tableEl.innerHTML = `<table><thead><tr><th>Ticker</th><th>Regla</th><th>Gravedad</th><th>Detalle</th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td class="tick">${r.ticker ?? ""}</td><td>${r.rule_id}</td><td>${r.severity}</td><td style="text-align:left">${r.detail}</td></tr>`).join("") +
+      `</tbody></table>`;
+    return;
+  }
+
+  const r = DATA.rankings[current];
+  descEl.textContent = r.descripcion;
+  if (!r.filas.length) {
+    tableEl.innerHTML = `<div class="empty">Ninguna empresa cumple el criterio en esta ejecución.</div>`;
+    return;
+  }
+  const cols = COLS.filter(([k]) => r.filas.some(row => k in row));
+  tableEl.innerHTML = `<table><thead><tr>` + cols.map(([, h]) => `<th>${h}</th>`).join("") +
+    `</tr></thead><tbody>` +
+    r.filas.map(row => `<tr>` + cols.map(([k, , f]) => `<td>${f(row[k])}</td>`).join("") + `</tr>`).join("") +
+    `</tbody></table>`;
+}
+</script>
+</body>
+</html>
