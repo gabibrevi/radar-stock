@@ -271,18 +271,25 @@ def _add_derived(wide: pd.DataFrame) -> pd.DataFrame:
             past = _lag(w, metric, lag)
             w[f"{metric}_cagr_{label}"] = _cagr(w[metric], past, years)
 
-    # Dilución y capitalización: la fuente fiable es el saldo de acciones
-    # en circulación. La media diluida ponderada (flujo) se usa solo como
-    # respaldo, porque muchos 20-F la declaran en miles y el TTM anual no
-    # debe dividirse entre 4 (ya es un promedio del año, no la suma de
-    # cuatro trimestres). Preferir diluidas/4 sin sanitizar produjo
-    # capitalizaciones de unos pocos millones en empresas de miles de
-    # millones (p. ej. NVMI).
-    outstanding = col("shares_outstanding")
+    # Dilución y capitalización.
+    #
+    # Reglas (auditoría 2026-08):
+    # - outstanding ≤ 0 o placeholders minúsculos (p. ej. 100) → ausente.
+    # - rellenar outstanding hacia delante dentro del CIK (VIA 2024→2025, FOUR).
+    # - diluidas solo como respaldo, saneadas (miles, anual vs suma TTM, tope).
+    # - rechazar niveles imposibles (>30B acciones): mejor sin mcap que uno falso
+    #   (RPAY llegó a $85B por una media diluida de 8.5e10).
+    outstanding = _plausible_shares(col("shares_outstanding"))
+    outstanding = _ffill_shares_by_cik(w["cik"], w["period_end"], outstanding, max_days=1800)
     diluted_ttm = col("shares_diluted_ttm")
-    shares = outstanding
-    if diluted_ttm.notna().any():
-        shares = shares.fillna(_diluted_share_average(outstanding, diluted_ttm))
+    diluted_avg = _diluted_share_average(
+        outstanding,
+        diluted_ttm,
+        q1=col("shares_diluted__q1"),
+        q4=col("shares_diluted__q4"),
+    )
+    shares = outstanding.fillna(diluted_avg)
+    shares = _plausible_shares(shares)
     w["share_count"] = shares
     w["dilution_1y"] = _pct_change(shares, _lag(w, "share_count", 4))
     w["dilution_3y"] = _pct_change(shares, _lag(w, "share_count", 12))
@@ -342,31 +349,121 @@ def _add_derived(wide: pd.DataFrame) -> pd.DataFrame:
     return w
 
 
-def _diluted_share_average(outstanding: pd.Series, diluted_ttm: pd.Series) -> pd.Series:
+# Acciones por debajo de esto suelen ser placeholders XBRL (100, 1000) o errores.
+_MIN_PLAUSIBLE_SHARES = 100_000
+# Por encima de ~NVDA post-split el dato es casi seguro basura de unidades.
+_MAX_PLAUSIBLE_SHARES = 30_000_000_000
+
+
+def _plausible_shares(shares: pd.Series) -> pd.Series:
+    return shares.where(
+        (shares >= _MIN_PLAUSIBLE_SHARES) & (shares <= _MAX_PLAUSIBLE_SHARES)
+    )
+
+
+def _ffill_shares_by_cik(
+    cik: pd.Series,
+    period_end: pd.Series,
+    shares: pd.Series,
+    max_days: int = 1800,
+) -> pd.Series:
+    """Rellena outstanding hacia delante solo si el hueco es reciente (~5 años).
+
+    Evita que un dato de 2018 (RPAY) contamine el mcap de 2025, pero permite
+    huecos de unos años (FOUR 2021→2025).
+    """
+    frame = pd.DataFrame(
+        {
+            "cik": cik.to_numpy(),
+            "date": pd.to_datetime(period_end).to_numpy(),
+            "shares": shares.to_numpy(),
+            "orig": np.arange(len(shares)),
+        }
+    )
+    frame = frame.sort_values(["cik", "date", "orig"], kind="mergesort")
+    filled = frame.groupby("cik", sort=False)["shares"].ffill()
+    src_date = frame["date"].where(frame["shares"].notna())
+    src_date = src_date.groupby(frame["cik"], sort=False).ffill()
+    gap_days = (frame["date"] - src_date) / np.timedelta64(1, "D")
+    ok = filled.notna() & (gap_days.isna() | (gap_days <= max_days))
+    values = filled.where(ok).to_numpy()
+    out = np.full(len(shares), np.nan, dtype="float64")
+    out[frame["orig"].to_numpy()] = values
+    return pd.Series(out, index=shares.index)
+
+
+def _diluted_share_average(
+    outstanding: pd.Series,
+    diluted_ttm: pd.Series,
+    q1: pd.Series | None = None,
+    q4: pd.Series | None = None,
+) -> pd.Series:
     """Convierte `shares_diluted_ttm` en un nivel comparable a outstanding.
 
-    - Si el anual diluido está ~1000× por debajo del outstanding, viene en miles.
-    - Si tras escalar sigue ~4× el outstanding, el TTM era suma de trimestres → /4.
-    - Si ya está cerca del outstanding, es un promedio anual: no dividir.
+    - TTM ≈ 4×q1 → suma de medias trimestrales → dividir entre 4.
+    - TTM ≈ q4 anual → promedio del año → no dividir.
+    - Si el diluido está ~1000× bajo el outstanding, viene en miles.
+    - Fuera de rango plausible → NaN.
     """
+    diluted_ttm = diluted_ttm.where(diluted_ttm > 0)
+    diluted_ttm = diluted_ttm.where(diluted_ttm <= _MAX_PLAUSIBLE_SHARES * 4)
+
     scaled = diluted_ttm.copy()
-    with_both = outstanding.notna() & diluted_ttm.notna() & (diluted_ttm > 0)
+    with_both = outstanding.notna() & diluted_ttm.notna()
     ratio = outstanding / diluted_ttm.replace(0, np.nan)
     thousands = with_both & ratio.between(400, 2500)
     scaled = scaled.mask(thousands, diluted_ttm * 1000.0)
 
-    # Sin outstanding: asumir el caso común de TTM = suma de 4 medias trimestrales.
-    avg = scaled / 4.0
+    avg = pd.Series(np.nan, index=scaled.index, dtype="float64")
+    decided = pd.Series(False, index=scaled.index)
+
+    if q1 is not None:
+        q1_pos = q1.where(q1 > 0)
+        ratio_q = scaled / q1_pos.replace(0, np.nan)
+        quarterly_sum = scaled.notna() & q1_pos.notna() & ratio_q.between(3.0, 5.0)
+        avg = avg.mask(quarterly_sum, scaled / 4.0)
+        decided = decided | quarterly_sum.fillna(False)
+
+    if q4 is not None:
+        q4_pos = q4.where(q4 > 0)
+        from_annual = (
+            scaled.notna()
+            & q4_pos.notna()
+            & ~decided
+            & ((scaled - q4_pos).abs() / q4_pos.replace(0, np.nan) < 0.05)
+        )
+        avg = avg.mask(from_annual.fillna(False), scaled)
+        decided = decided | from_annual.fillna(False)
+
     if outstanding.notna().any():
         ratio_scaled = outstanding / scaled.replace(0, np.nan)
-        # scaled ya es promedio anual ≈ outstanding → usar scaled
-        annual_avg = outstanding.notna() & scaled.notna() & ratio_scaled.between(0.5, 2.0)
-        avg = avg.mask(annual_avg, scaled)
-        # scaled ≈ 4× outstanding → suma trimestral, mantener /4 (ya en avg)
-        # scaled todavía << outstanding tras *1000: mejor no inventar
-        still_tiny = outstanding.notna() & avg.notna() & ((outstanding / avg) > 50)
-        avg = avg.mask(still_tiny, np.nan)
-    return avg
+        as_annual = ~decided & outstanding.notna() & scaled.notna() & ratio_scaled.between(
+            0.5, 2.0
+        )
+        avg = avg.mask(as_annual, scaled)
+        decided = decided | as_annual.fillna(False)
+
+        ratio_div4 = outstanding / (scaled / 4.0).replace(0, np.nan)
+        as_sum = ~decided & outstanding.notna() & scaled.notna() & ratio_div4.between(
+            0.5, 2.0
+        )
+        avg = avg.mask(as_sum, scaled / 4.0)
+        decided = decided | as_sum.fillna(False)
+
+    # Resto: si el bruto es plausible, tratarlo como promedio; si solo /4 lo es, /4.
+    rest = scaled.notna() & ~decided
+    raw_ok = rest & (scaled >= _MIN_PLAUSIBLE_SHARES) & (scaled <= _MAX_PLAUSIBLE_SHARES)
+    div4 = scaled / 4.0
+    div4_ok = (
+        rest
+        & ~raw_ok
+        & (div4 >= _MIN_PLAUSIBLE_SHARES)
+        & (div4 <= _MAX_PLAUSIBLE_SHARES)
+    )
+    avg = avg.mask(raw_ok, scaled)
+    avg = avg.mask(div4_ok, div4)
+
+    return _plausible_shares(avg)
 
 
 def _consecutive_streak(frame: pd.DataFrame, flags: pd.Series) -> pd.Series:
