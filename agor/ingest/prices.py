@@ -39,6 +39,9 @@ def backfill_prices(
     """
     today = dt.date.today()
     start = today - dt.timedelta(days=int(365.25 * years))
+    # El plan free de Polygon suele devolver 403 sobre la sesión de hoy mientras
+    # el mercado (o la consolidación) no ha cerrado. Pedimos como máximo ayer.
+    end = today - dt.timedelta(days=1)
 
     # La conversión a `date` es incondicional a propósito. DuckDB devuelve estas
     # fechas como pandas.Timestamp, que hereda de datetime.date, así que un
@@ -55,7 +58,7 @@ def backfill_prices(
 
     candidates = [
         day
-        for day in reversed(client.trading_days(start, today))
+        for day in reversed(client.trading_days(start, end))
         if day not in existing and day.isoformat() not in holidays
     ]
     if max_days is not None:
@@ -65,7 +68,16 @@ def backfill_prices(
 
     total = 0
     for day in candidates:
-        frame = client.grouped_daily(day)
+        try:
+            frame = client.grouped_daily(day)
+        except Exception as exc:  # noqa: BLE001 — 403/red del día no tumba el todo
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            console.print(
+                f"  [yellow]{day}: Polygon no disponible"
+                + (f" ({status})" if status else f" ({exc})")
+                + "; se omite[/yellow]"
+            )
+            continue
         if frame.empty:
             holidays.add(day.isoformat())
             set_watermark(con, "polygon_holidays", ",".join(sorted(holidays)))

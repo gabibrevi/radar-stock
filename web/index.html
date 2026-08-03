@@ -50,6 +50,33 @@
     padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0;
     color: var(--muted); font-size: 13.5px; margin-bottom: 14px;
   }
+  .filters {
+    display: grid;
+    grid-template-columns: 1.4fr repeat(5, minmax(110px, 1fr)) auto;
+    gap: 8px;
+    margin: 0 0 14px;
+    align-items: end;
+  }
+  @media (max-width: 980px) {
+    .filters { grid-template-columns: 1fr 1fr; }
+  }
+  .filters label {
+    display: flex; flex-direction: column; gap: 4px;
+    color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  }
+  .filters input, .filters select {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; font-size: 13.5px; width: 100%;
+  }
+  .filters input:focus, .filters select:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .filters .reset {
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer; height: 38px;
+  }
+  .filters .reset:hover { color: var(--text); border-color: #33405c; }
+  .filter-meta { color: var(--muted); font-size: 12.5px; margin: -6px 0 12px; }
   .tablebox { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   th, td { padding: 10px 13px; text-align: right; white-space: nowrap; }
@@ -58,6 +85,9 @@
     font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
     position: sticky; top: 0;
   }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--text); }
+  th .sortmark { opacity: .45; margin-left: 4px; font-size: 10px; }
   td:nth-child(1), td:nth-child(2), td:nth-child(3),
   th:nth-child(1), th:nth-child(2), th:nth-child(3) { text-align: left; }
   tbody tr { border-top: 1px solid var(--border); }
@@ -95,6 +125,8 @@
   <div class="cards" id="cards"></div>
   <nav id="tabs"></nav>
   <div id="desc" class="desc"></div>
+  <div class="filters" id="filters"></div>
+  <div class="filter-meta" id="filter-meta"></div>
   <div class="tablebox"><div id="table"></div></div>
 
   <details open>
@@ -126,9 +158,15 @@ const BANDS = {
   "Exceptional Buy": "b-exceptional", "Strong Buy": "b-strong", "Buy": "b-buy",
   "Watchlist Premium": "b-watch", "Watchlist": "b-watch", "No invertir": "b-no",
 };
+const MCAP_OPTS = [
+  ["", "Cualquier cap."],
+  ["50e6", "≥ $50M"],
+  ["300e6", "≥ $300M"],
+  ["2e9", "≥ $2B"],
+  ["10e9", "≥ $10B"],
+];
+
 function esc(v) {
-  // Los nombres y detalles vienen de la SEC y se pintan en Pages público.
-  // Sin escape, un título con <script> o comillas rompería el HTML o abriría XSS.
   return String(v ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -157,26 +195,46 @@ const COLS = [
 ];
 
 function trunc(v, n) { if (!v) return ""; return v.length > n ? v.slice(0, n - 1) + "…" : v; }
-function num(v) { return v == null ? "—" : v.toFixed(0); }
-function pct(v) { return v == null ? "—" : (v * 100).toFixed(1) + "%"; }
+function num(v) { return v == null ? "—" : Number(v).toFixed(0); }
+function pct(v) { return v == null ? "—" : (Number(v) * 100).toFixed(1) + "%"; }
 function bar(v) {
   if (v == null) return "—";
-  const p = Math.round(v * 100);
+  const p = Math.round(Number(v) * 100);
   return `<div class="bar" title="${p}%"><i style="width:${p}%"></i></div>`;
 }
 function money(v) {
   if (v == null) return "—";
+  const n = Number(v);
   const u = [[1e12, "B"], [1e9, "MM"], [1e6, "M"]];
-  for (const [d, s] of u) if (v >= d) return "$" + (v / d).toFixed(1) + s;
-  return "$" + v.toFixed(0);
+  for (const [d, s] of u) if (n >= d) return "$" + (n / d).toFixed(1) + s;
+  return "$" + n.toFixed(0);
 }
 
-let DATA = null, current = 0;
+let DATA = null;
+let current = 0;
+let filtersByTab = {};
+let sortByTab = {};
+
+function defaultFilters() {
+  return { q: "", sector: "", band: "", minScore: "", minCov: "", minMcap: "", rule: "", severity: "" };
+}
+function filters() {
+  if (!filtersByTab[current]) filtersByTab[current] = defaultFilters();
+  return filtersByTab[current];
+}
+function sortState() {
+  if (!sortByTab[current]) {
+    sortByTab[current] = current === -1
+      ? { key: "ticker", dir: 1 }
+      : { key: "total", dir: -1 };
+  }
+  return sortByTab[current];
+}
 
 fetch("data/radar.json?" + Date.now())
   .then(r => r.ok ? r.json() : Promise.reject(r.status))
   .then(d => { DATA = d; render(); })
-  .catch(e => {
+  .catch(() => {
     document.getElementById("stamp").textContent =
       "No se encuentra data/radar.json. Ejecuta primero ./radar puntuar.";
   });
@@ -203,13 +261,10 @@ function render() {
     .map(([k, v]) => `<span>${esc(k)}</span><span>${v.toFixed(1)}%</span>`).join("");
 
   renderFreshness();
+  renderFilters();
   paint();
 }
 
-// El retraso de cada fuente se muestra siempre, y se marca en ámbar por encima de
-// 45 días. Los datasets de insiders y de 13F se publican por trimestres y pueden ir
-// meses por detrás: sin este aviso, un motor institucional alto se lee como "los
-// fondos están entrando ahora" cuando puede describir el trimestre anterior.
 function renderFreshness() {
   const el = document.getElementById("freshness");
   if (!el) return;
@@ -221,39 +276,217 @@ function renderFreshness() {
       return `<span>${esc(r.fuente)}</span><span style="opacity:.5">sin datos</span>`;
     }
     const cls = d > 45 ? ' class="warn"' : "";
-    // Las fechas llegan serializadas como marca de tiempo completa; aquí solo
-    // interesa el día.
     const day = String(r.ultimo_dato).slice(0, 10);
     return `<span>${esc(r.fuente)}</span><span${cls}>${esc(day)} · ${d} d de retraso</span>`;
   }).join("");
 }
 
-function pick(i) { current = i; render(); }
+function pick(i) {
+  current = i;
+  render();
+}
+
+function baseRows() {
+  if (current === -1) return DATA.alertas || [];
+  return (DATA.rankings[current] && DATA.rankings[current].filas) || [];
+}
+
+function uniqueValues(rows, key) {
+  return [...new Set(rows.map(r => r[key]).filter(v => v != null && v !== ""))]
+    .map(String)
+    .sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function renderFilters() {
+  const f = filters();
+  const rows = baseRows();
+  const isAlerts = current === -1;
+  const sectors = uniqueValues(rows, "sector");
+  const bands = uniqueValues(rows, "band");
+  const rules = uniqueValues(rows, "rule_id");
+  const severities = uniqueValues(rows, "severity");
+
+  let html = `
+    <label>Buscar
+      <input id="f-q" type="search" placeholder="${isAlerts ? "Ticker o detalle…" : "Ticker o empresa…"}" value="${esc(f.q)}" oninput="onFilterChange()">
+    </label>`;
+
+  if (isAlerts) {
+    html += `
+      <label>Regla
+        <select id="f-rule" onchange="onFilterChange()">
+          <option value="">Todas</option>
+          ${rules.map(r => `<option value="${esc(r)}" ${f.rule === r ? "selected" : ""}>${esc(r)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Gravedad
+        <select id="f-sev" onchange="onFilterChange()">
+          <option value="">Todas</option>
+          ${severities.map(r => `<option value="${esc(r)}" ${f.severity === r ? "selected" : ""}>${esc(r)}</option>`).join("")}
+        </select>
+      </label>
+      <label style="visibility:hidden">.</label>
+      <label style="visibility:hidden">.</label>
+      <label style="visibility:hidden">.</label>`;
+  } else {
+    html += `
+      <label>Sector
+        <select id="f-sector" onchange="onFilterChange()">
+          <option value="">Todos</option>
+          ${sectors.map(s => `<option value="${esc(s)}" ${f.sector === s ? "selected" : ""}>${esc(s)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Banda
+        <select id="f-band" onchange="onFilterChange()">
+          <option value="">Todas</option>
+          ${bands.map(b => `<option value="${esc(b)}" ${f.band === b ? "selected" : ""}>${esc(b)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Score mín.
+        <input id="f-score" type="number" min="0" max="100" step="1" placeholder="0" value="${esc(f.minScore)}" oninput="onFilterChange()">
+      </label>
+      <label>Cob. mín. %
+        <input id="f-cov" type="number" min="0" max="100" step="1" placeholder="0" value="${esc(f.minCov)}" oninput="onFilterChange()">
+      </label>
+      <label>Capitaliz.
+        <select id="f-mcap" onchange="onFilterChange()">
+          ${MCAP_OPTS.map(([v, lab]) => `<option value="${v}" ${f.minMcap === v ? "selected" : ""}>${lab}</option>`).join("")}
+        </select>
+      </label>`;
+  }
+
+  html += `<button type="button" class="reset" onclick="resetFilters()">Limpiar</button>`;
+  document.getElementById("filters").innerHTML = html;
+}
+
+function onFilterChange() {
+  const f = filters();
+  f.q = (document.getElementById("f-q")?.value || "").trim();
+  if (current === -1) {
+    f.rule = document.getElementById("f-rule")?.value || "";
+    f.severity = document.getElementById("f-sev")?.value || "";
+  } else {
+    f.sector = document.getElementById("f-sector")?.value || "";
+    f.band = document.getElementById("f-band")?.value || "";
+    f.minScore = document.getElementById("f-score")?.value || "";
+    f.minCov = document.getElementById("f-cov")?.value || "";
+    f.minMcap = document.getElementById("f-mcap")?.value || "";
+  }
+  paint();
+}
+
+function resetFilters() {
+  filtersByTab[current] = defaultFilters();
+  renderFilters();
+  paint();
+}
+
+function applyFilters(rows) {
+  const f = filters();
+  const q = f.q.toLowerCase();
+  return rows.filter(row => {
+    if (q) {
+      const hay = current === -1
+        ? `${row.ticker || ""} ${row.detail || ""} ${row.rule_id || ""}`
+        : `${row.ticker || ""} ${row.name || ""}`;
+      if (!hay.toLowerCase().includes(q)) return false;
+    }
+    if (current === -1) {
+      if (f.rule && row.rule_id !== f.rule) return false;
+      if (f.severity && row.severity !== f.severity) return false;
+      return true;
+    }
+    if (f.sector && row.sector !== f.sector) return false;
+    if (f.band && row.band !== f.band) return false;
+    if (f.minScore !== "" && !(Number(row.total) >= Number(f.minScore))) return false;
+    if (f.minCov !== "" && !(Number(row.coverage) * 100 >= Number(f.minCov))) return false;
+    if (f.minMcap !== "" && !(Number(row.market_cap) >= Number(f.minMcap))) return false;
+    return true;
+  });
+}
+
+function applySort(rows) {
+  const { key, dir } = sortState();
+  return [...rows].sort((a, b) => {
+    const av = a[key], bv = b[key];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+    return String(av).localeCompare(String(bv), "es") * dir;
+  });
+}
+
+function setSort(key) {
+  const s = sortState();
+  if (s.key === key) s.dir *= -1;
+  else { s.key = key; s.dir = key === "ticker" || key === "name" || key === "sector" ? 1 : -1; }
+  paint();
+}
 
 function paint() {
   const descEl = document.getElementById("desc");
   const tableEl = document.getElementById("table");
+  const metaEl = document.getElementById("filter-meta");
+  const all = baseRows();
+  const filtered = applySort(applyFilters(all));
+  metaEl.textContent = all.length
+    ? `Mostrando ${filtered.length.toLocaleString("es")} de ${all.length.toLocaleString("es")}`
+    : "";
 
   if (current === -1) {
     descEl.textContent = "Alertas detectadas en esta ejecución.";
-    const rows = DATA.alertas || [];
-    if (!rows.length) { tableEl.innerHTML = `<div class="empty">Ninguna alerta hoy.</div>`; return; }
-    tableEl.innerHTML = `<table><thead><tr><th>Ticker</th><th>Regla</th><th>Gravedad</th><th>Detalle</th></tr></thead><tbody>` +
-      rows.map(r => `<tr><td class="tick">${esc(r.ticker)}</td><td>${esc(r.rule_id)}</td><td>${esc(r.severity)}</td><td style="text-align:left">${esc(r.detail)}</td></tr>`).join("") +
+    if (!all.length) {
+      tableEl.innerHTML = `<div class="empty">Ninguna alerta hoy.</div>`;
+      return;
+    }
+    if (!filtered.length) {
+      tableEl.innerHTML = `<div class="empty">Ninguna alerta coincide con los filtros.</div>`;
+      return;
+    }
+    const s = sortState();
+    const heads = [
+      ["ticker", "Ticker"],
+      ["rule_id", "Regla"],
+      ["severity", "Gravedad"],
+      ["detail", "Detalle"],
+    ];
+    tableEl.innerHTML = `<table><thead><tr>` +
+      heads.map(([k, h]) =>
+        `<th class="sortable" onclick="setSort('${k}')">${esc(h)}` +
+        (s.key === k ? `<span class="sortmark">${s.dir > 0 ? "▲" : "▼"}</span>` : "") +
+        `</th>`
+      ).join("") +
+      `</tr></thead><tbody>` +
+      filtered.map(r =>
+        `<tr><td class="tick">${esc(r.ticker)}</td><td>${esc(r.rule_id)}</td><td>${esc(r.severity)}</td><td style="text-align:left">${esc(r.detail)}</td></tr>`
+      ).join("") +
       `</tbody></table>`;
     return;
   }
 
   const r = DATA.rankings[current];
   descEl.textContent = r.descripcion;
-  if (!r.filas.length) {
+  if (!all.length) {
     tableEl.innerHTML = `<div class="empty">Ninguna empresa cumple el criterio en esta ejecución.</div>`;
     return;
   }
-  const cols = COLS.filter(([k]) => r.filas.some(row => k in row));
-  tableEl.innerHTML = `<table><thead><tr>` + cols.map(([, h]) => `<th>${esc(h)}</th>`).join("") +
+  if (!filtered.length) {
+    tableEl.innerHTML = `<div class="empty">Ninguna empresa coincide con los filtros.</div>`;
+    return;
+  }
+  const cols = COLS.filter(([k]) => all.some(row => k in row));
+  const s = sortState();
+  tableEl.innerHTML = `<table><thead><tr>` +
+    cols.map(([k, h]) =>
+      `<th class="sortable" onclick="setSort('${k}')">${esc(h)}` +
+      (s.key === k ? `<span class="sortmark">${s.dir > 0 ? "▲" : "▼"}</span>` : "") +
+      `</th>`
+    ).join("") +
     `</tr></thead><tbody>` +
-    r.filas.map(row => `<tr>` + cols.map(([k, , f]) => `<td>${f(row[k])}</td>`).join("") + `</tr>`).join("") +
+    filtered.map(row =>
+      `<tr>` + cols.map(([k, , f]) => `<td>${f(row[k])}</td>`).join("") + `</tr>`
+    ).join("") +
     `</tbody></table>`;
 }
 </script>
