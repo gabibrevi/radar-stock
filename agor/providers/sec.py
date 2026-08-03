@@ -107,13 +107,30 @@ class SecClient:
     def fsds_extract_member(zip_path: Path, member: str, dest_dir: Path) -> Path:
         """Extrae un miembro del ZIP a disco.
 
+        Algunos datasets de 13F vienen con los TSV en la raíz y otros dentro de
+        una carpeta (p. ej. `01JUN2025-31AUG2025_form13f/SUBMISSION.tsv`). Se
+        resuelve por nombre de fichero si la ruta exacta no existe.
+
         `num.txt` ronda los 540 MB descomprimidos, así que se extrae, se filtra y
         se borra en el mismo paso en lugar de cargarlo en memoria.
         """
         dest_dir.mkdir(parents=True, exist_ok=True)
-        target = dest_dir / member
-        with zipfile.ZipFile(zip_path) as archive, archive.open(member) as source:
-            with target.open("wb") as handle:
+        target = dest_dir / Path(member).name
+        with zipfile.ZipFile(zip_path) as archive:
+            resolved = member
+            if member not in archive.namelist():
+                matches = [
+                    name
+                    for name in archive.namelist()
+                    if name.rstrip("/").endswith(member) and not name.endswith("/")
+                ]
+                if not matches:
+                    raise KeyError(
+                        f"No hay ítem '{member}' en {zip_path.name}: "
+                        f"{archive.namelist()[:12]}"
+                    )
+                resolved = matches[0]
+            with archive.open(resolved) as source, target.open("wb") as handle:
                 while chunk := source.read(1 << 22):
                     handle.write(chunk)
         return target

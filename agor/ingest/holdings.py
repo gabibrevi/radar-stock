@@ -247,7 +247,11 @@ def backfill(
         key = Path(url).name
         if key in done:
             continue
-        rows = ingest_13f_file(con, client, url)
+        try:
+            rows = ingest_13f_file(con, client, url)
+        except Exception as exc:  # noqa: BLE001 — un ZIP raro no tumba el radar
+            console.print(f"  [yellow]13F {key} omitido ({exc})[/yellow]")
+            continue
         if rows == 0:
             continue
         total += rows
