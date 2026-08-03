@@ -34,7 +34,10 @@
   .card {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 16px 18px;
+    cursor: pointer; transition: border-color .12s;
   }
+  .card:hover { border-color: #33405c; }
+  .card.on { border-color: var(--accent); }
   .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
   .card .v { font-size: 26px; font-weight: 600; margin-top: 4px; }
   nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 24px 0 18px; }
@@ -244,13 +247,32 @@ function render() {
     `Generado el ${DATA.generado} · ${DATA.universo.toLocaleString("es")} empresas con puntuación final`;
 
   const dist = Object.fromEntries((DATA.distribucion || []).map(x => [x.banda, x.empresas]));
-  document.getElementById("cards").innerHTML = [
+  const bandTab = {
+    "Exceptional Buy": "exceptional_buy",
+    "Strong Buy": "strong_buy",
+    "Buy": "buy",
+    "Watchlist Premium": "watchlist_premium",
+    "Watchlist": "watchlist",
+  };
+  const cardDefs = [
     ["Exceptional Buy", dist["Exceptional Buy"] || 0],
     ["Strong Buy", dist["Strong Buy"] || 0],
     ["Buy", dist["Buy"] || 0],
-    ["Watchlist", (dist["Watchlist"] || 0) + (dist["Watchlist Premium"] || 0)],
-    ["Alertas hoy", (DATA.alertas || []).length],
-  ].map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`).join("");
+    ["Watchlist Premium", dist["Watchlist Premium"] || 0],
+    ["Watchlist", dist["Watchlist"] || 0],
+    ["Alertas hoy", (DATA.alertas || []).length, -1],
+  ];
+  document.getElementById("cards").innerHTML = cardDefs.map(([k, v, forceIdx]) => {
+    const clave = bandTab[k];
+    const idx = forceIdx !== undefined
+      ? forceIdx
+      : (DATA.rankings || []).findIndex(r => r.clave === clave);
+    const on = idx === current ? " on" : "";
+    const click = idx >= -1 && (forceIdx !== undefined || idx >= 0)
+      ? `onclick="pick(${idx})"`
+      : "";
+    return `<div class="card${on}" ${click}><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
+  }).join("");
 
   document.getElementById("tabs").innerHTML = DATA.rankings
     .map((r, i) => `<button class="${i === current ? "on" : ""}" onclick="pick(${i})">${esc(r.titulo.replace("Top 20 ", ""))} <span style="opacity:.6">${r.filas.length}</span></button>`)

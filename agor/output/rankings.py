@@ -100,6 +100,24 @@ RANKINGS: tuple[Ranking, ...] = (
         lambda f: f["band"] == "Strong Buy",
     ),
     Ranking(
+        "buy",
+        "Top 20 Buy",
+        "Puntuación entre 85 y 90.",
+        lambda f: f["band"] == "Buy",
+    ),
+    Ranking(
+        "watchlist_premium",
+        "Top 20 Watchlist Premium",
+        "Puntuación entre 80 y 85: cerca de entrar en bandas de compra.",
+        lambda f: f["band"] == "Watchlist Premium",
+    ),
+    Ranking(
+        "watchlist",
+        "Top 20 Watchlist",
+        "Puntuación entre 75 y 80: candidatos a seguir, aún sin señal de compra.",
+        lambda f: f["band"] == "Watchlist",
+    ),
+    Ranking(
         "small_caps",
         "Top 20 Small Caps ocultas",
         "Menos de 2.000 millones de capitalización y calidad alta. Es donde una "
